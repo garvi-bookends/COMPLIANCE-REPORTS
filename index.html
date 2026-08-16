@@ -892,6 +892,31 @@ function cleaningStats(loc, wk, freq) {
     pct: Math.round((appr / total) * 100)
   };
 }
+/* Same as tasksFor/cleaningStats but filtered by an arbitrary from/to due-date
+   range instead of a fixed ISO week/month bucket. */
+function tasksInRange(loc, from, to, freq) {
+  return DB.tasks.filter(function (t) {
+    if (t.loc !== loc) return false;
+    if (freq && t.freq !== freq) return false;
+    return t.due >= from && t.due <= to;
+  });
+}
+function cleaningStatsRange(loc, from, to, freq) {
+  var ts = tasksInRange(loc, from, to, freq), td = ymd(today());
+  var done = 0, appr = 0, rej = 0, pend = 0, overdue = 0, noPhoto = 0;
+  ts.forEach(function (t) {
+    if (t.status === 'completed') { done++; if (t.approved) appr++; }
+    else if (t.status === 'rejected') rej++;
+    else { pend++; if (daysBetween(td, t.due) < 0) overdue++; }
+    if (t.status !== 'pending' && (!t.before || !t.after)) noPhoto++;
+  });
+  var total = ts.length || 1;
+  return {
+    total: ts.length, done: done, approved: appr, rejected: rej, pending: pend,
+    overdue: overdue, noPhoto: noPhoto,
+    pct: Math.round((appr / total) * 100)
+  };
+}
 function productsFor(loc) { return DB.products.filter(function (p) { return p.loc === loc; }); }
 function expiryStats(loc) {
   var ps = productsFor(loc), o = { total: ps.length, expired: 0, soon: 0, month: 0, safe: 0, labelled: 0 };
@@ -1215,7 +1240,7 @@ function cloudDot() {
    ===================================================================== */
 var $ = function (s) { return document.querySelector(s); };
 function h(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]; }); }
-var S = { tab: 'home', loc: null, week: null, cleanFilter: 'all', expFilter: 'all', labFilter: 'all', repRange: 'week', q: '' };
+var S = { tab: 'home', loc: null, week: null, rangeFrom: null, rangeTo: null, cleanFilter: 'all', expFilter: 'all', labFilter: 'all', repRange: 'week', q: '' };
 
 function toast(msg) {
   var d = document.createElement('div'); d.className = 'toast'; d.textContent = msg;
@@ -1700,10 +1725,10 @@ function taskRow(t) {
     '</span><span class="chev">›</span></button>';
 }
 function renderClean() {
-  var loc = S.loc, wk = S.week, p = perm();
-  var st = cleaningStats(loc, wk);
-  var stW = cleaningStats(loc, wk, 'W'), stM = cleaningStats(loc, wk, 'M');
-  var all = tasksFor(loc, wk);
+  var loc = S.loc, from = S.rangeFrom, to = S.rangeTo, p = perm();
+  var st = cleaningStatsRange(loc, from, to);
+  var stW = cleaningStatsRange(loc, from, to, 'W'), stM = cleaningStatsRange(loc, from, to, 'M');
+  var all = tasksInRange(loc, from, to);
   var f = S.cleanFilter;
   var list = all.filter(function (t) {
     if (f === 'weekly') return t.freq === 'W';
@@ -1716,7 +1741,6 @@ function renderClean() {
     if (f === 'mine') return t.assigned === ME.id;
     return true;
   });
-  var weeks = recentWeeks(6);
   var html = header('FULL KITCHEN DEEP CLEAN', lname(loc));
   html += '<div class="wrap">' +
     '<div class="card"><div class="row"><div>' + ring(st.pct, 76, 9) + '</div>' +
@@ -1726,10 +1750,13 @@ function renderClean() {
     '<div class="grid2" style="margin-top:12px">' +
     '<button class="stat" data-a="cfilter" data-x="weekly"><b style="color:' + scoreColor(stW.pct) + '">' + stW.pct + '%</b><span>Weekly · ' + stW.total + ' jobs</span></button>' +
     '<button class="stat" data-a="cfilter" data-x="monthly"><b style="color:' + scoreColor(stM.pct) + '">' + stM.pct + '%</b><span>Monthly · ' + stM.total + ' jobs</span></button></div>' +
-    '<select class="inp" id="wksel" style="margin-top:12px">' + weeks.map(function (w) {
-      return '<option value="' + w + '"' + (w === wk ? ' selected' : '') + '>' + (w === weekId(today()) ? 'This week · ' : '') + weekLabel(w) + '</option>';
-    }).join('') + '</select>' +
-    '<div class="xs muted center" style="margin-top:8px">Monthly heavy jobs shown are for ' + h(monthLabel(monthOfWeek(wk))) + '</div></div>';
+    '<div class="chips" style="margin-top:12px">' + [['week', 'This week'], ['lastweek', 'Last week'], ['7d', 'Last 7 days']].map(function (c) {
+      return '<button class="chip" data-a="crange" data-x="' + c[0] + '">' + c[1] + '</button>';
+    }).join('') + '</div>' +
+    '<div class="grid2" style="margin-top:10px">' +
+    '<label class="f"><span>From</span><input class="inp" id="rf_from" type="date" value="' + from + '" max="' + ymd(today()) + '"></label>' +
+    '<label class="f"><span>To</span><input class="inp" id="rf_to" type="date" value="' + to + '" max="' + ymd(today()) + '"></label></div>' +
+    '<div class="xs muted center" style="margin-top:8px">Showing jobs due ' + h(fmtD(from)) + ' – ' + h(fmtD(to)) + '</div></div>';
 
   var chips = [['all', 'All ' + all.length], ['weekly', 'Weekly ' + stW.total], ['monthly', 'Monthly ' + stM.total],
   ['pending', 'Pending ' + st.pending], ['approve', 'To approve ' + (st.done - st.approved)],
@@ -2530,6 +2557,12 @@ document.addEventListener('click', function (ev) {
     case 'locdash': locDash(x); break;
     case 'openLoc': { var q = x.split(':'); closeSheet(); S.loc = q[0]; S.tab = q[1]; render(); break; }
     case 'cfilter': S.cleanFilter = x; render(); break;
+    case 'crange': {
+      if (x === 'week') { S.rangeFrom = ymd(mondayOf(today())); S.rangeTo = ymd(addDays(mondayOf(today()), 6)); }
+      else if (x === 'lastweek') { var lm = addDays(mondayOf(today()), -7); S.rangeFrom = ymd(lm); S.rangeTo = ymd(addDays(lm, 6)); }
+      else if (x === '7d') { S.rangeFrom = ymd(addDays(today(), -6)); S.rangeTo = ymd(today()); }
+      render(); break;
+    }
     case 'efilter': closeSheet(); S.tab = 'exp'; S.expFilter = x; render(); break;
     case 'lfilter': S.labFilter = x; render(); break;
     case 'rrange': S.repRange = x; render(); break;
@@ -2604,6 +2637,8 @@ document.addEventListener('change', function (ev) {
   var el = ev.target;
   if (el.id === 'locsel') { S.loc = el.value; render(); }
   else if (el.id === 'wksel') { S.week = el.value; render(); }
+  else if (el.id === 'rf_from') { S.rangeFrom = el.value; if (S.rangeFrom > S.rangeTo) S.rangeTo = S.rangeFrom; render(); }
+  else if (el.id === 'rf_to') { S.rangeTo = el.value; if (S.rangeTo < S.rangeFrom) S.rangeFrom = S.rangeTo; render(); }
   else if (el.getAttribute && el.getAttribute('data-a') === 'chrole') {
     var u = userById(el.getAttribute('data-x'));
     u.role = el.value; if (ROLES[u.role].all) u.loc = null; else if (!u.loc) u.loc = LOCATIONS[0].id;
@@ -2678,6 +2713,8 @@ handleDeepLink();
 Cloud.init();
 initPWA();
 S.week = weekId(today());
+S.rangeFrom = ymd(mondayOf(today()));
+S.rangeTo = ymd(addDays(mondayOf(today()), 6));
 S.loc = ME ? (ME.loc || 'ALL') : 'ALL';
 render();
 </script></body></html>
