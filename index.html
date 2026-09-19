@@ -95,6 +95,7 @@ button,input,select,textarea{font:inherit;color:inherit}
 .tab{flex:1;background:none;border:0;padding:6px 2px;display:flex;flex-direction:column;align-items:center;gap:3px;color:var(--mut);font-size:10.5px;font-weight:700;cursor:pointer}
 .tab svg{width:24px;height:24px;fill:currentColor}
 .tab.on{color:var(--brand)}
+.tab .tcount{background:var(--red);color:#fff;font-size:10px;font-weight:800;min-width:18px;height:18px;border-radius:9px;display:inline-grid;place-items:center;padding:0 4px;margin-left:4px;vertical-align:middle}
 
 /* ---------- pills / status ---------- */
 .pill{display:inline-flex;align-items:center;gap:5px;padding:4px 10px;border-radius:999px;font-size:11.5px;font-weight:800;letter-spacing:.2px;white-space:nowrap}
@@ -629,11 +630,293 @@ var QR = (function () {
 
 
 /* =====================================================================
+   AUTH — talks to the backend at /api
+
+   Everything about passwords now happens on the server. This file never
+   sees a password hash and never stores a password; it posts the typed
+   password once over HTTPS and keeps only a short-lived access token in a
+   variable.
+
+   Why the access token lives in a variable and not in localStorage:
+   anything in localStorage is readable by any script on the page and
+   survives forever. The long-lived half of the session is an httpOnly
+   cookie the server sets, which JavaScript cannot read at all, and
+   Auth.boot() trades it for a fresh access token on every start.
+   ===================================================================== */
+
+/* Same origin when Express serves this file, which is the normal setup.
+   Point this at the backend's URL if you host index.html separately, e.g.
+   var API_BASE = 'https://bookends-api.onrender.com'; */
+var API_BASE = '';
+
+var Api = {
+  token: null,            // access token — memory only, never persisted
+  expiresAt: 0,           // epoch ms when the access token dies
+  refreshTimer: null,
+  refreshing: null,       // in-flight refresh, shared so we never run two
+
+  url: function (path) { return API_BASE + path; },
+
+  /* One fetch wrapper for every call.
+
+     - attaches the bearer token
+     - sends cookies (credentials) so the refresh cookie travels
+     - on an expired token, refreshes once and replays the request, so the
+       user is never interrupted mid-task by a 15-minute expiry
+     - turns a non-2xx into a rejected promise carrying the server's
+       message, so callers can show it directly */
+  call: function (method, path, body, opts) {
+    opts = opts || {};
+    var self = this;
+    var headers = { 'Accept': 'application/json' };
+    if (body !== undefined && body !== null) headers['Content-Type'] = 'application/json';
+    if (this.token && !opts.noAuth) headers.Authorization = 'Bearer ' + this.token;
+
+    return fetch(this.url(path), {
+      method: method,
+      headers: headers,
+      credentials: 'include',
+      body: body === undefined || body === null ? undefined : JSON.stringify(body)
+    }).then(function (r) {
+      return r.text().then(function (text) {
+        var data = null;
+        if (text) { try { data = JSON.parse(text); } catch (e) { data = null; } }
+
+        if (r.ok) return data === null ? {} : data;
+
+        /* The access token expired. Refresh once and replay. The retry flag
+           stops an endless loop if the refresh itself 401s. */
+        if (r.status === 401 && data && data.code === 'TOKEN_EXPIRED' && !opts._retried) {
+          return self.refresh().then(function () {
+            return self.call(method, path, body, { _retried: true, noAuth: opts.noAuth });
+          });
+        }
+
+        var err = new Error((data && data.error) || ('Request failed (' + r.status + ')'));
+        err.status = r.status;
+        err.code = (data && data.code) || 'HTTP_' + r.status;
+        throw err;
+      });
+    }, function () {
+      /* fetch only rejects when the network itself failed. Flagged so
+         callers can say "you are offline" instead of "wrong password". */
+      var err = new Error('No connection to the server. Check your internet and try again.');
+      err.offline = true;
+      err.code = 'OFFLINE';
+      throw err;
+    });
+  },
+
+  get:  function (p)    { return this.call('GET', p, null); },
+  post: function (p, b) { return this.call('POST', p, b === undefined ? {} : b); },
+  patch:function (p, b) { return this.call('PATCH', p, b); },
+  del:  function (p)    { return this.call('DELETE', p, null); },
+
+  /* Stores a session returned by login / refresh / change-password and
+     schedules the next silent refresh at 80% of the token's life. */
+  adopt: function (data) {
+    this.token = data.accessToken || null;
+    this.expiresAt = Date.now() + ((data.expiresIn || 900) * 1000);
+    if (this.refreshTimer) clearTimeout(this.refreshTimer);
+    var self = this;
+    var delay = Math.max(30000, (data.expiresIn || 900) * 800);
+    this.refreshTimer = setTimeout(function () {
+      self.refresh().catch(function () { /* the next API call will retry */ });
+    }, delay);
+    return data;
+  },
+
+  clear: function () {
+    this.token = null;
+    this.expiresAt = 0;
+    if (this.refreshTimer) { clearTimeout(this.refreshTimer); this.refreshTimer = null; }
+  },
+
+  /* Trades the httpOnly refresh cookie for a new access token. Concurrent
+     callers share one request rather than each rotating the token. */
+  refresh: function () {
+    var self = this;
+    if (this.refreshing) return this.refreshing;
+
+    this.refreshing = this.call('POST', '/api/auth/refresh', {}, { noAuth: true })
+      .then(function (data) {
+        self.refreshing = null;
+        self.adopt(data);
+        if (data.user) Auth.adoptUser(data.user);
+        return data;
+      }, function (err) {
+        self.refreshing = null;
+        throw err;
+      });
+
+    return this.refreshing;
+  }
+};
+
+/* ---------------------------------------------------------------------
+   Auth — session state and the calls the UI makes
+   --------------------------------------------------------------------- */
+var Auth = {
+  /* True when we could not reach the server at start-up but had a cached
+     profile. The app stays usable on the existing local data; anything
+     that needs the server says so when it is tried. */
+  offline: false,
+
+  /* Caches hold no secrets: a profile (name, role, location) and the staff
+     roster. Both are things the UI already displayed on screen. */
+  PROFILE_KEY: 'bookends.profile.v1',
+  ROSTER_KEY: 'bookends.roster.v1',
+
+  adoptUser: function (user) {
+    ME = user;
+    this.offline = false;
+    try { localStorage.setItem(this.PROFILE_KEY, JSON.stringify(user)); } catch (e) { }
+    /* Keep the roster copy of this user in step, so the header and the
+       people list agree straight after a role change. */
+    var i = DB.users.map(function (u) { return u.id; }).indexOf(user.id);
+    if (i > -1) DB.users[i] = mergeRosterEntry(DB.users[i], user);
+    else DB.users.push(mergeRosterEntry(null, user));
+    saveLocal();
+    return user;
+  },
+
+  cachedProfile: function () {
+    try { return JSON.parse(localStorage.getItem(this.PROFILE_KEY)) || null; } catch (e) { return null; }
+  },
+
+  forget: function () {
+    if (typeof Cloud !== 'undefined') Cloud.stop();
+    Api.clear();
+    ME = null;
+    PENDING_SIGNUPS = 0;
+    RESET_REQUESTS = 0;
+    this.offline = false;
+    try { localStorage.removeItem(this.PROFILE_KEY); } catch (e) { }
+    try { localStorage.removeItem(SESS); } catch (e) { }
+  },
+
+  login: function (uid, password) {
+    var self = this;
+    return Api.call('POST', '/api/auth/login', { uid: uid, password: password }, { noAuth: true })
+      .then(function (data) {
+        Api.adopt(data);
+        self.adoptUser(data.user);
+        return self.loadRoster().then(function () { return data; }, function () { return data; });
+      });
+  },
+
+  logout: function () {
+    var self = this;
+    /* Revoke server-side first, but sign out locally even if that call
+       cannot be made — the user asked to be logged out. */
+    return Api.call('POST', '/api/auth/logout', {}, { noAuth: true })
+      .catch(function () { return null; })
+      .then(function () { self.forget(); });
+  },
+
+  changePassword: function (currentPassword, newPassword, confirmPassword) {
+    var self = this;
+    return Api.post('/api/auth/change-password', {
+      currentPassword: currentPassword,
+      newPassword: newPassword,
+      confirmPassword: confirmPassword
+    }).then(function (data) {
+      Api.adopt(data);
+      self.adoptUser(data.user);
+      return data;
+    });
+  },
+
+  /* The staff list, used for names, initials and job assignment. Contains
+     no credential material — the endpoint physically cannot return one. */
+  loadRoster: function () {
+    return Api.get('/api/users/roster').then(function (data) {
+      var incoming = data.users || [];
+      var byId = {};
+      DB.users.forEach(function (u) { byId[u.id] = u; });
+      DB.users = incoming.map(function (u) { return mergeRosterEntry(byId[u.id], u); });
+      try { localStorage.setItem(Auth.ROSTER_KEY, JSON.stringify(DB.users)); } catch (e) { }
+      saveLocal();
+      return DB.users;
+    });
+  },
+
+  restoreRosterFromCache: function () {
+    try {
+      var cached = JSON.parse(localStorage.getItem(this.ROSTER_KEY));
+      if (cached && cached.length) DB.users = cached;
+    } catch (e) { }
+  },
+
+  /* Runs once at start-up.
+
+     Success  -> signed in without the user typing anything (the cookie did it)
+     401      -> no session, show the login screen
+     offline  -> fall back to the cached profile so the app still opens */
+  boot: function (done) {
+    var self = this;
+
+    /* Non-secret settings (the starting password shown in the UI copy).
+       Never blocks boot. */
+    Api.call('GET', '/api/config', null, { noAuth: true }).then(function (cfg) {
+      if (cfg.defaultPassword) DEFAULT_PW = cfg.defaultPassword;
+      if (cfg.minPasswordLength) MIN_PW_LEN = cfg.minPasswordLength;
+    }).catch(function () { });
+
+    Api.refresh().then(function () {
+      return self.loadRoster().catch(function () { self.restoreRosterFromCache(); });
+    }).then(function () {
+      done();
+    }).catch(function (err) {
+      if (err && err.offline) {
+        /* No network. Open on the cached profile and local data rather than
+           locking a kitchen out of its checklist because the wifi is down. */
+        var cached = self.cachedProfile();
+        if (cached) {
+          ME = cached;
+          self.offline = true;
+          self.restoreRosterFromCache();
+          done();
+          return;
+        }
+      }
+      /* No session, or no cached profile to fall back on. */
+      self.forget();
+      done();
+    });
+  }
+};
+
+/* Roster entries carry no password fields. Merging rather than replacing
+   keeps any local-only bookkeeping (_u) that the sync layer relies on. */
+function mergeRosterEntry(existing, incoming) {
+  var out = existing ? existing : {};
+  out.id = incoming.id;
+  out.uid = incoming.uid;
+  out.name = incoming.name;
+  out.role = incoming.role;
+  out.loc = incoming.loc;
+  if (incoming.mustChange !== undefined) out.mustChange = incoming.mustChange;
+  if (incoming.lastLogin !== undefined) out.lastLogin = incoming.lastLogin;
+  if (incoming.createdAt !== undefined) out.createdAt = incoming.createdAt;
+  out._u = incoming._u || Date.now();
+  /* Belt and braces: if an old cached record still carries a password from
+     the previous version of the app, drop it here. */
+  if (out.pw !== undefined) delete out.pw;
+  return out;
+}
+
+
+/* =====================================================================
    BOOKENDS KITCHEN OPERATIONS & COMPLIANCE  —  data layer
    ===================================================================== */
 var KEY = 'bookends.compliance.v6';
 var SESS = 'bookends.session.v6';
+/* Starting password shown in the admin copy. The real value lives in the
+   backend's DEFAULT_PASSWORD env var; /api/config refreshes this at boot.
+   Nothing authenticates against it here. */
 var DEFAULT_PW = '1234';
+var MIN_PW_LEN = 8;   /* replaced at boot by the server's setting (/api/config) */
 
 /* Each location and the person who runs it */
 var LOCATIONS = [
@@ -647,7 +930,17 @@ var LOCATIONS = [
   { id: 'AHM-AIKO',    name: 'Aiko Ambli',             city: 'Ahmedabad', code: 'AKA', head: 'Akshay' }
 ];
 
+/* Roles an admin can give someone. Super Admin is never offered: there is
+   exactly one, and it is set on the server, not from the app. */
+function assignableRoles() {
+  return Object.keys(ROLES).filter(function (k) { return !ROLES[k].superadmin; });
+}
+
 var ROLES = {
+  /* Exactly one account holds this (husen). It is the only one that can approve
+     or reject self sign-ups. It is set on the server with
+     `npm run set-superadmin`, never from inside the app. */
+  superadmin: { label: 'Super Admin',            all: true, approve: true, edit: true, manage: true, readonly: false, superadmin: true },
   exec:    { label: 'Execution Head',            all: true, approve: true, edit: true, manage: true, readonly: false },
   aexec:   { label: 'Assistant Execution Head',  all: true, approve: true, edit: true, manage: true, readonly: false },
   admin:   { label: 'Admin',            all: true,  approve: true,  edit: true,  manage: true,  readonly: false },
@@ -709,8 +1002,25 @@ var CLEAN_TEMPLATE = [
   { area: 'Dishwasher — strip down, boiler descale & tank',    zone: 'Machines',          freq: 'M' },
   { area: 'Extraction ducting & fan housing — deep clean',     zone: 'Machines',          freq: 'M' },
   { area: 'Dry store — empty shelves, wash & restock',         zone: 'Storage',           freq: 'M' },
-  { area: 'Staff area, lockers & changing room',               zone: 'Staff area',        freq: 'M' }
+  { area: 'Staff area, lockers & changing room',               zone: 'Staff area',        freq: 'M' },
+
+  /* ---- ADDED LATER ----
+     Kept at the END of the list on purpose — a job's ID comes from its position
+     among the weekly jobs, so inserting above would re-label recorded work.
+     `day` fixes a job to one weekday: days after Monday (1 = Tuesday). */
+  { area: 'Wall cleaning — all kitchen walls',                 zone: 'Walls & ceiling',   freq: 'W' },
+  { area: 'All GN pan stands — wash, degrease & sanitise',     zone: 'Tables & surfaces', freq: 'W' },
+  { area: 'Drainage cleaning — drains, lines & gratings',      zone: 'Floors',            freq: 'W' },
+  { area: 'Housekeeping area cleaning',                        zone: 'Housekeeping',      freq: 'W', day: 1 }
 ];
+var DAY_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+/* Which saved tasks are fixed-day jobs. Looked up from the template by
+   frequency + name, so tasks recorded before `day` existed still match. */
+var FIXED_DAY = {};
+CLEAN_TEMPLATE.forEach(function (t) { if (t.day != null) FIXED_DAY[t.freq + '|' + t.area] = t.day; });
+function fixedDay(t) { return FIXED_DAY[t.freq + '|' + t.area]; }
+function isTuesdayJob(t) { return fixedDay(t) === 1; }
+var TUESDAY_JOBS = CLEAN_TEMPLATE.filter(function (t) { return t.day === 1; });
 var WEEKLY_JOBS = CLEAN_TEMPLATE.filter(function (t) { return t.freq === 'W'; });
 var MONTHLY_JOBS = CLEAN_TEMPLATE.filter(function (t) { return t.freq === 'M'; });
 
@@ -785,8 +1095,11 @@ function newTaskRec(L, tp, period, due, i, who) {
   return {
     id: 'T-' + L.code + '-' + period + '-' + tp.freq + i, loc: L.id, period: period, freq: tp.freq,
     area: tp.area, zone: tp.zone, assigned: who ? who.id : null, due: due, status: 'pending',
-    before: null, after: null, approved: null, approvedBy: null, reject: '',
-    completedAt: null, completedBy: null, note: '', _u: Date.now()
+    before: null, after: null, approved: null, approvedBy: null, approvedAt: null, reject: '',
+    completedAt: null, completedBy: null, note: '',
+    /* A generated job is 'the oldest possible edit': if another phone or the
+       server already has this job (perhaps done or approved), that copy wins. */
+    _u: 0
   };
 }
 /* Creates this week's and this month's jobs for any location that does not have
@@ -800,28 +1113,24 @@ function ensureJobs() {
     var who = DB.users.filter(function (u) { return u.loc === L.id && u.role === 'manager'; })[0] ||
               DB.users.filter(function (u) { return u.loc === L.id; })[0] || null;
     WEEKLY_JOBS.forEach(function (tp, i) {
-      var r = newTaskRec(L, tp, wid, ymd(addDays(mon, 1 + (i % 6))), i, who);
-      if (!have[r.id]) { DB.tasks.push(r); added++; if (typeof Cloud !== 'undefined') Cloud.touch('tasks', r); }
+      var r = newTaskRec(L, tp, wid, ymd(addDays(mon, tp.day != null ? tp.day : 1 + (i % 6))), i, who);
+      if (!have[r.id]) { DB.tasks.push(r); added++; if (typeof Cloud !== 'undefined') Cloud.queue('tasks', r); }
     });
     MONTHLY_JOBS.forEach(function (tp, i) {
       var r = newTaskRec(L, tp, mid, ymd(new Date(t.getFullYear(), t.getMonth(), Math.min(28, 6 + i * 2))), i, who);
-      if (!have[r.id]) { DB.tasks.push(r); added++; if (typeof Cloud !== 'undefined') Cloud.touch('tasks', r); }
+      if (!have[r.id]) { DB.tasks.push(r); added++; if (typeof Cloud !== 'undefined') Cloud.queue('tasks', r); }
     });
   });
   if (added) saveLocal();
   return added;
 }
 function freshData() {
-  var users = [];
-  function addUser(id, name, role, loc) {
-    users.push({ id: id, name: name, role: role, loc: loc, uid: makeUid(name, users),
-      pw: DEFAULT_PW, mustChange: true, createdAt: Date.now(), _u: Date.now() });
-  }
-  addUser('U-HK', 'Husen Khan', 'exec', null);
-  addUser('U-MAN', 'Manish', 'aexec', null);
-  addUser('U-RUT', 'Rutvik', 'aexec', null);
-  LOCATIONS.forEach(function (L) { addUser('U-' + L.code + '-M', L.head, 'manager', L.id); });
-  return { users: users, tasks: [], products: [], log: [], read: {}, createdAt: Date.now() };
+  /* No users are seeded here any more, and no passwords.
+
+     Accounts live in the backend database. The roster arrives from
+     GET /api/users/roster after a successful sign-in, and the starting
+     roster is created once on the server with `npm run seed`. */
+  return { users: [], tasks: [], products: [], log: [], read: {}, createdAt: Date.now() };
 }
 
 /* ---------------- store ---------------- */
@@ -830,26 +1139,63 @@ function load() {
   try { DB = JSON.parse(localStorage.getItem(KEY)); } catch (e) { DB = null; }
   if (!DB || !DB.users) { DB = freshData(); saveLocal(); }
   if (!DB.read) DB.read = {};
-  try { var u = localStorage.getItem(SESS); ME = u ? DB.users.filter(function (x) { return x.id === u; })[0] || null : null; } catch (e) { ME = null; }
+
+  /* Upgrading from the version that kept plaintext passwords on the device:
+     strip every `pw` field out of the local copy on first load, so an old
+     localStorage blob does not keep them lying around after the change. */
+  var scrubbed = false;
+  DB.users.forEach(function (u) {
+    if (u.pw !== undefined) { delete u.pw; scrubbed = true; }
+  });
+  if (scrubbed) saveLocal();
+
+  /* ME is no longer restored from localStorage — a user id in local storage
+     is not proof of anything. Auth.boot() establishes the session from the
+     httpOnly refresh cookie instead. */
+  ME = null;
+  try { localStorage.removeItem(SESS); } catch (e) { }
 }
 function saveLocal() {
   try { localStorage.setItem(KEY, JSON.stringify(DB)); }
   catch (e) { toast('Storage full — connect cloud sync to store photos online'); }
 }
 /* save() — pass the record you changed so it also goes to the cloud.
-   save('tasks', t) / save('products', p) / save('users', u) */
+   save('tasks', t) / save('products', p)
+   Accounts are not saved this way — they go through the /api/admin endpoints. */
 function save(kind, obj) {
+  /* Accounts never travel through sync — /api/sync only accepts tasks and
+     products. Nothing should call save('users') now. */
+  if (kind === 'users') {
+    console.warn('save("users") is no longer supported — use the /api/admin endpoints');
+    saveLocal();
+    return;
+  }
   if (kind && obj && typeof Cloud !== 'undefined') Cloud.touch(kind, obj);
   saveLocal();
 }
 function removeRecord(kind, obj) {
-  var arr = kind === 'users' ? DB.users : kind === 'tasks' ? DB.tasks : DB.products;
+  if (kind === 'users') {
+    console.warn('removeRecord("users") is no longer supported — use DELETE /api/admin/users/:id');
+    return;
+  }
+  var arr = kind === 'tasks' ? DB.tasks : DB.products;
   var i = arr.map(function (x) { return x.id; }).indexOf(obj.id);
   if (i > -1) arr.splice(i, 1);
-  if (typeof Cloud !== 'undefined' && Cloud.on()) Cloud.tombstone(kind, obj);
+  /* Queued even when offline or signed out, so the deletion still reaches
+     the other devices once this one reconnects. */
+  if (typeof Cloud !== 'undefined') Cloud.tombstone(kind, obj);
   saveLocal();
 }
-function resetAll() { localStorage.removeItem(KEY); localStorage.removeItem(SESS); location.reload(); }
+/* Wipes this device. The session is revoked server-side too, so the refresh
+   cookie left behind cannot be reused. */
+function resetAll() {
+  Auth.logout().then(function () {
+    try { localStorage.removeItem(KEY); } catch (e) { }
+    try { localStorage.removeItem(Auth.ROSTER_KEY); } catch (e) { }
+    try { localStorage.removeItem(SYNC_KEY); } catch (e) { }
+    location.reload();
+  });
+}
 
 function userById(id) { for (var i = 0; i < DB.users.length; i++) if (DB.users[i].id === id) return DB.users[i]; return null; }
 function userByUid(uid) {
@@ -986,83 +1332,73 @@ var SEV = [
 
 /* =====================================================================
    CLOUD SYNC — shares one live copy of the data across every device.
-   Backed by Supabase (PostgREST + Storage). Works offline and catches up.
+   Backed by this app's own server (/api/sync, /api/photos). Works offline
+   and catches up.
    ---------------------------------------------------------------------
-   To switch it on, either paste your two values below, or use
-   Profile → Cloud sync inside the app.
+   There is nothing to configure. Sync runs whenever someone is signed in,
+   and the server decides what they may see and change: their own kitchen
+   (or every kitchen for head-office roles), and nothing at all for an
+   Auditor to change.
+
+   It used to talk to Supabase directly with a public "anon" key kept in
+   this page, which let anyone who opened the page read or overwrite every
+   kitchen's records. That key and those direct calls are gone.
    ===================================================================== */
-var CLOUD_BAKED = {
-  url: '',   // e.g. https://abcdefghijkl.supabase.co
-  key: ''    // the "anon / publishable" key — never the service_role key
-};
-var CLOUD_KEY = 'bookends.cloud.v1';
-var TABLES = { users: 'bk_users', tasks: 'bk_tasks', products: 'bk_products' };
-var BUCKET = 'bk-photos';
+var SYNC_KEY = 'bookends.sync.v2';
+var SYNC_KINDS = ['tasks', 'products'];
+var SYNC_CHUNK_BYTES = 700 * 1024;   /* under the server's 1 MB limit */
+var SYNC_CHUNK_ROWS = 150;           /* under the server's 200-row limit */
 
 var Cloud = {
-  cfg: { url: '', key: '' },
   state: 'off',          // off | syncing | ok | error
-  lastPull: '1970-01-01T00:00:00Z',
-  dirty: { users: {}, tasks: {}, products: {} },
-  timer: null, poll: null, err: '',
+  err: '',
+  /* Persisted, so edits made offline still upload after the app is closed
+     and reopened. Cursors are the server's own timestamps. */
+  cursor: { tasks: null, products: null },
+  dirty: { tasks: {}, products: {} },
+  tombs: { tasks: {}, products: {} },     // deletions waiting to upload: id -> loc
+  owner: null,                            // which account these cursors belong to
+  timer: null, poll: null, busy: false,
 
-  init: function () {
-    var saved = null;
-    try { saved = JSON.parse(localStorage.getItem(CLOUD_KEY)); } catch (e) { }
-    var c = saved && saved.url ? saved : CLOUD_BAKED;
-    this.cfg = { url: String(c.url || '').replace(/\/+$/, ''), key: String(c.key || '') };
-    if (saved && saved.lastPull) this.lastPull = saved.lastPull;
-    if (this.on()) { this.state = 'syncing'; this.sync(true); this.startPolling(); }
+  on: function () { return !!(Api.token && ME); },
+
+  load: function () {
+    var s = null;
+    try { s = JSON.parse(localStorage.getItem(SYNC_KEY)); } catch (e) { }
+    if (!s) return;
+    this.owner = s.owner || null;
+    if (s.cursor) this.cursor = s.cursor;
+    if (s.dirty) this.dirty = s.dirty;
+    if (s.tombs) this.tombs = s.tombs;
   },
-  on: function () { return !!(this.cfg.url && this.cfg.key); },
-  saveCfg: function () {
-    try { localStorage.setItem(CLOUD_KEY, JSON.stringify({ url: this.cfg.url, key: this.cfg.key, lastPull: this.lastPull })); } catch (e) { }
+  saveState: function () {
+    try {
+      localStorage.setItem(SYNC_KEY, JSON.stringify({ owner: this.owner, cursor: this.cursor, dirty: this.dirty, tombs: this.tombs }));
+    } catch (e) { }
   },
-  connect: function (url, key, cb) {
-    this.cfg = { url: String(url || '').trim().replace(/\/+$/, ''), key: String(key || '').trim() };
-    this.lastPull = '1970-01-01T00:00:00Z';
+
+  /* Called once someone is signed in with a live token. A different
+     account on this device starts from a full download, because what it
+     may see differs. */
+  start: function () {
+    if (!this.on()) return;
+    if (this.owner !== ME.id) {
+      this.owner = ME.id;
+      this.cursor = { tasks: null, products: null };
+      this.saveState();
+    }
     var self = this;
-    this.request('GET', '/rest/v1/' + TABLES.users + '?select=id&limit=1', null, function (err) {
-      if (err) { self.state = 'error'; self.err = err; cb(err); return; }
-      self.saveCfg();
-      /* Pull first. Whatever is already in the cloud is the truth — this device
-         must not overwrite it with its own older copy. Only records the cloud
-         has never seen are uploaded. */
-      self.seen = { users: {}, tasks: {}, products: {} };
-      self.force = true;   /* on first connect the cloud always wins */
-      self.sync(true, function (e2) {
-        self.force = false;
-        if (e2) { cb(e2); return; }
-        self.markMissing();
-        self.push(function () { self.startPolling(); cb(null); });
-      });
-    });
+    this.sync(function () { self.startPolling(); });
   },
-  disconnect: function () {
-    this.cfg = { url: '', key: '' }; this.state = 'off';
-    try { localStorage.removeItem(CLOUD_KEY); } catch (e) { }
+  stop: function () {
     if (this.poll) { clearInterval(this.poll); this.poll = null; }
+    if (this.timer) { clearTimeout(this.timer); this.timer = null; }
+    this.setState('off');
   },
   startPolling: function () {
     var self = this;
     if (this.poll) clearInterval(this.poll);
-    this.poll = setInterval(function () { if (!document.hidden) self.sync(false); }, 45000);
-  },
-
-  headers: function (extra) {
-    var hh = { apikey: this.cfg.key, Authorization: 'Bearer ' + this.cfg.key };
-    for (var k in (extra || {})) hh[k] = extra[k];
-    return hh;
-  },
-  request: function (method, path, body, cb) {
-    if (!this.on()) { cb('Cloud not connected'); return; }
-    var opts = { method: method, headers: this.headers({ 'Content-Type': 'application/json' }) };
-    if (body) { opts.body = JSON.stringify(body); opts.headers.Prefer = 'resolution=merge-duplicates,return=minimal'; }
-    fetch(this.cfg.url + path, opts).then(function (r) {
-      if (!r.ok) { return r.text().then(function (t) { cb('HTTP ' + r.status + ' — ' + (t || r.statusText).slice(0, 160)); }); }
-      var ct = r.headers.get('content-type') || '';
-      if (ct.indexOf('json') > -1) r.json().then(function (j) { cb(null, j); }); else cb(null, null);
-    }).catch(function (e) { cb('Network: ' + (e && e.message ? e.message : 'unreachable')); });
+    this.poll = setInterval(function () { if (!document.hidden) self.sync(); }, 45000);
   },
 
   /* ---------- marking changes ---------- */
@@ -1070,31 +1406,39 @@ var Cloud = {
     if (!obj) return;
     obj._u = Date.now();
     this.dirty[kind][obj.id] = 1;
+    this.saveState();
     this.schedule();
   },
-  seen: { users: {}, tasks: {}, products: {} },
-  force: false,
-  markAll: function () {
-    var self = this;
-    DB.users.forEach(function (u) { if (!u._u) u._u = Date.now(); self.dirty.users[u.id] = 1; });
-    DB.tasks.forEach(function (t) { if (!t._u) t._u = Date.now(); self.dirty.tasks[t.id] = 1; });
-    DB.products.forEach(function (p) { if (!p._u) p._u = Date.now(); self.dirty.products[p.id] = 1; });
+  /* Marks a record for upload without re-stamping it as a new edit. */
+  queue: function (kind, obj) {
+    if (!obj) return;
+    this.dirty[kind][obj.id] = 1;
+    this.saveState();
+    this.schedule();
   },
-  /* upload only what the cloud has never seen */
-  markMissing: function () {
+  tombstone: function (kind, obj) {
+    delete this.dirty[kind][obj.id];
+    this.tombs[kind][obj.id] = obj.loc || null;
+    this.saveState();
+    this.schedule();
+  },
+  /* A device's first sync: upload whatever the server has never seen, so
+     work recorded before sync existed is not left behind. */
+  markMissing: function (seen) {
     var self = this;
-    [['users', DB.users], ['tasks', DB.tasks], ['products', DB.products]].forEach(function (pair) {
+    [['tasks', DB.tasks], ['products', DB.products]].forEach(function (pair) {
       pair[1].forEach(function (o) {
-        if (self.seen[pair[0]][o.id]) return;
+        if (seen[pair[0]][o.id]) return;
         if (!o._u) o._u = Date.now();
         self.dirty[pair[0]][o.id] = 1;
       });
     });
+    this.saveState();
     saveLocal();
   },
   pendingCount: function () {
     var n = 0, self = this;
-    ['users', 'tasks', 'products'].forEach(function (k) { n += Object.keys(self.dirty[k]).length; });
+    SYNC_KINDS.forEach(function (k) { n += Object.keys(self.dirty[k]).length + Object.keys(self.tombs[k]).length; });
     return n;
   },
   schedule: function () {
@@ -1107,68 +1451,124 @@ var Cloud = {
   /* ---------- push ---------- */
   push: function (cb) {
     if (!this.on()) { if (cb) cb('off'); return; }
-    var self = this, kinds = ['users', 'tasks', 'products'], i = 0;
+    var self = this, k = 0;
     this.setState('syncing');
-    function next() {
-      if (i >= kinds.length) { self.setState('ok'); if (cb) cb(null); return; }
-      var kind = kinds[i++], ids = Object.keys(self.dirty[kind]);
-      if (!ids.length) { next(); return; }
-      var src = kind === 'users' ? DB.users : kind === 'tasks' ? DB.tasks : DB.products;
+
+    function nextKind() {
+      if (k >= SYNC_KINDS.length) { self.saveState(); self.setState('ok'); if (cb) cb(null); return; }
+      var kind = SYNC_KINDS[k++];
+      var src = kind === 'tasks' ? DB.tasks : DB.products;
+      var byId = {};
+      src.forEach(function (o) { byId[o.id] = o; });
+
+      /* Each entry remembers the _u it was sent with. If the record is edited
+         again while the upload is in flight, it stays dirty for next time. */
       var rows = [];
-      ids.forEach(function (id) {
-        var o = src.filter(function (x) { return x.id === id; })[0];
-        if (o) rows.push({ id: o.id, loc: o.loc || null, updated_at: new Date(o._u || Date.now()).toISOString(), data: o });
+      Object.keys(self.dirty[kind]).forEach(function (id) {
+        var o = byId[id];
+        if (!o) { delete self.dirty[kind][id]; return; }
+        rows.push({ sentU: o._u, row: { id: o.id, loc: o.loc || null, data: o } });
       });
-      if (!rows.length) { ids.forEach(function (id) { delete self.dirty[kind][id]; }); next(); return; }
-      /* chunk so a bad connection can still get through */
-      var chunks = [], size = 60;
-      for (var c = 0; c < rows.length; c += size) chunks.push(rows.slice(c, c + size));
+      Object.keys(self.tombs[kind]).forEach(function (id) {
+        rows.push({ tomb: true, row: { id: id, loc: self.tombs[kind][id], data: { id: id, deleted: true, _u: Date.now() } } });
+      });
+      if (!rows.length) { nextKind(); return; }
+
+      /* Chunk by size as well as count: a task holding a photo taken
+         offline carries it as a data: URL until it can be uploaded. */
+      var chunks = [], cur = [], bytes = 0;
+      rows.forEach(function (r) {
+        var size = JSON.stringify(r.row).length;
+        if (cur.length && (bytes + size > SYNC_CHUNK_BYTES || cur.length >= SYNC_CHUNK_ROWS)) { chunks.push(cur); cur = []; bytes = 0; }
+        cur.push(r); bytes += size;
+      });
+      if (cur.length) chunks.push(cur);
+
       var ci = 0;
-      (function pushChunk() {
-        if (ci >= chunks.length) { ids.forEach(function (id) { delete self.dirty[kind][id]; }); next(); return; }
+      (function nextChunk() {
+        if (ci >= chunks.length) { nextKind(); return; }
         var chunk = chunks[ci++];
-        self.request('POST', '/rest/v1/' + TABLES[kind] + '?on_conflict=id', chunk, function (err) {
-          if (err) { self.setState('error', err); if (cb) cb(err); return; }
-          pushChunk();
+        Api.post('/api/sync/' + kind, { rows: chunk.map(function (r) { return r.row; }) }).then(function (res) {
+          /* Saved, skipped as out of scope, or older than the server's copy —
+             either way this device is done with it; a newer copy arrives on
+             the next pull. */
+          chunk.forEach(function (r) {
+            if (r.tomb) { delete self.tombs[kind][r.row.id]; return; }
+            var o = byId[r.row.id];
+            if (!o || o._u === r.sentU) delete self.dirty[kind][r.row.id];
+          });
+          /* The server refused some edits (e.g. a status change this account
+             may not make) and sent back its own copy: put that back on the
+             phone so the screen shows what everyone else sees. */
+          if (res && res.current && res.current.length) {
+            res.current.forEach(function (x) { delete self.dirty[kind][x.id]; });
+            if (self.merge(kind, res.current, true, { tasks: {}, products: {} })) { saveLocal(); if (typeof render === 'function' && ME) render(); }
+          }
+          self.saveState();
+          nextChunk();
+        }, function (err) {
+          if (err.code === 'READ_ONLY') {
+            /* An Auditor's device never uploads; drop the queue quietly. */
+            self.dirty[kind] = {}; self.tombs[kind] = {}; self.saveState();
+            nextKind(); return;
+          }
+          self.saveState();
+          self.setState('error', err.message);
+          if (cb) cb(err.message);
         });
       })();
     }
-    next();
+    nextKind();
   },
 
   /* ---------- pull + merge ---------- */
-  sync: function (full, cb) {
+  sync: function (cb) {
     if (!this.on()) { if (cb) cb('off'); return; }
-    var self = this, kinds = ['users', 'tasks', 'products'], i = 0, changed = false;
-    var since = full ? '1970-01-01T00:00:00Z' : this.lastPull;
-    var stamp = new Date().toISOString();
+    if (this.busy) { if (cb) cb(null); return; }
+    var self = this, k = 0, changed = false;
+    var first = !this.cursor.tasks && !this.cursor.products;
+    var seen = { tasks: {}, products: {} };
+    this.busy = true;
     this.setState('syncing');
-    function next() {
-      if (i >= kinds.length) {
-        self.lastPull = stamp; self.saveCfg();
-        self.push(function () {
-          if (changed) { saveLocal(); if (typeof render === 'function' && ME) render(); }
-          if (cb) cb(null);
-        });
-        return;
-      }
-      var kind = kinds[i++];
-      self.request('GET', '/rest/v1/' + TABLES[kind] + '?select=id,updated_at,data&updated_at=gt.' + encodeURIComponent(since) + '&limit=5000', null, function (err, rows) {
-        if (err) { self.setState('error', err); if (cb) cb(err); return; }
-        if (self.merge(kind, rows || [])) changed = true;
-        next();
+
+    function done(err) {
+      self.busy = false;
+      if (err) { self.setState('error', err); if (cb) cb(err); return; }
+      if (first) self.markMissing(seen);
+      self.saveState();
+      self.push(function () {
+        if (changed) { saveLocal(); if (typeof render === 'function' && ME) render(); }
+        if (cb) cb(null);
       });
     }
-    next();
+
+    function nextKind() {
+      if (k >= SYNC_KINDS.length) { done(null); return; }
+      var kind = SYNC_KINDS[k++];
+      (function page(since, after) {
+        var q = '?since=' + encodeURIComponent(since || '1970-01-01T00:00:00Z') + (after ? '&after=' + encodeURIComponent(after) : '');
+        Api.get('/api/sync/' + kind + q).then(function (res) {
+          if (self.merge(kind, res.rows || [], first, seen)) changed = true;
+          if (res.more) { page(res.next.since, res.next.after); return; }
+          self.cursor[kind] = res.cursor;
+          nextKind();
+        }, function (err) { done(err.message); });
+      })(self.cursor[kind], null);
+    }
+    nextKind();
   },
-  merge: function (kind, rows) {
-    var arr = kind === 'users' ? DB.users : kind === 'tasks' ? DB.tasks : DB.products;
+
+  /* first: on a device's first download the server's copy wins, so a
+     stale phone cannot overwrite the kitchen's real records. After that
+     the newer edit wins, and an edit not yet uploaded always wins. */
+  merge: function (kind, rows, first, seen) {
+    var arr = kind === 'tasks' ? DB.tasks : DB.products;
     var idx = {}, changed = false;
     arr.forEach(function (o, n) { idx[o.id] = n; });
     rows.forEach(function (row) {
       var remote = row.data; if (!remote || !remote.id) return;
-      this.seen[kind][remote.id] = 1;
-      var rt = new Date(row.updated_at).getTime() || remote._u || 0;
+      seen[kind][remote.id] = 1;
+      var rt = remote._u || new Date(row.updated_at).getTime() || 0;
       var pos = idx[remote.id];
       if (remote.deleted) {
         if (pos !== undefined) { arr.splice(pos, 1); idx = {}; arr.forEach(function (o, n) { idx[o.id] = n; }); changed = true; }
@@ -1178,25 +1578,24 @@ var Cloud = {
         remote._u = rt; arr.push(remote); idx[remote.id] = arr.length - 1; changed = true;
       } else {
         var local = arr[pos];
-        /* a local edit that has not been pushed yet always wins */
-        if (this.dirty[kind][local.id]) return;
-        if (this.force || rt > (local._u || 0)) { remote._u = rt; arr[pos] = remote; changed = true; }
+        /* An edit not yet uploaded wins only when it is genuinely newer. */
+        if (this.dirty[kind][local.id]) {
+          if ((local._u || 0) >= rt) return;
+          delete this.dirty[kind][local.id];
+        }
+        if (first || rt > (local._u || 0)) { remote._u = rt; arr[pos] = remote; changed = true; }
       }
     }, this);
     return changed;
   },
 
-  tombstone: function (kind, obj) {
-    if (!this.on()) return;
-    delete this.dirty[kind][obj.id];
-    this.request('POST', '/rest/v1/' + TABLES[kind] + '?on_conflict=id',
-      [{ id: obj.id, loc: obj.loc || null, updated_at: new Date().toISOString(), data: { id: obj.id, deleted: true } }],
-      function () { });
-  },
-
-  /* ---------- photo upload ---------- */
-  uploadPhoto: function (dataUrl, name, cb) {
-    if (!this.on()) { cb(null, dataUrl); return; }
+  /* ---------- photo upload ----------
+     Sends the image bytes to /api/photos, which stores them and answers with
+     a permanent URL. Any failure (offline, no photo store configured) hands
+     back the original data: URL so the photo stays on the device and is
+     tried again the next time the record is saved. */
+  uploadPhoto: function (dataUrl, loc, cb) {
+    if (!this.on() || !dataUrl || dataUrl.indexOf('data:') !== 0) { cb('off', dataUrl); return; }
     var bin, mime = 'image/jpeg';
     try {
       var parts = dataUrl.split(',');
@@ -1204,16 +1603,25 @@ var Cloud = {
       var raw = atob(parts[1]), u8 = new Uint8Array(raw.length);
       for (var i = 0; i < raw.length; i++) u8[i] = raw.charCodeAt(i);
       bin = u8;
-    } catch (e) { cb(null, dataUrl); return; }
-    var self = this, path = name + '-' + Date.now() + '.jpg';
-    fetch(this.cfg.url + '/storage/v1/object/' + BUCKET + '/' + path, {
-      method: 'POST',
-      headers: this.headers({ 'Content-Type': mime, 'x-upsert': 'true' }),
-      body: bin
-    }).then(function (r) {
-      if (!r.ok) { cb('upload failed', dataUrl); return; }
-      cb(null, self.cfg.url + '/storage/v1/object/public/' + BUCKET + '/' + path);
-    }).catch(function () { cb('offline', dataUrl); });
+    } catch (e) { cb('bad image', dataUrl); return; }
+
+    function send(retried) {
+      return fetch(Api.url('/api/photos' + (loc ? '?loc=' + encodeURIComponent(loc) : '')), {
+        method: 'POST',
+        headers: { 'Content-Type': mime, 'Authorization': 'Bearer ' + Api.token, 'Accept': 'application/json' },
+        credentials: 'include',
+        body: bin
+      }).then(function (r) {
+        return r.json().catch(function () { return {}; }).then(function (data) {
+          if (r.ok && data.url) { cb(null, data.url); return; }
+          if (r.status === 401 && data.code === 'TOKEN_EXPIRED' && !retried) {
+            return Api.refresh().then(function () { return send(true); }, function () { cb('signed out', dataUrl); });
+          }
+          cb(data.error || 'upload failed', dataUrl);
+        });
+      }).catch(function () { cb('offline', dataUrl); });
+    }
+    send(false);
   },
 
   setState: function (s, err) {
@@ -1222,7 +1630,7 @@ var Cloud = {
     if (el) el.outerHTML = cloudDot();
   },
   label: function () {
-    if (!this.on()) return 'Not connected';
+    if (!this.on()) return navigator.onLine ? 'Not signed in' : 'Offline — will upload later';
     if (this.state === 'error') return 'Sync problem';
     if (this.state === 'syncing') return 'Syncing…';
     var p = this.pendingCount();
@@ -1260,6 +1668,15 @@ function askConfirm(title, msg, okLabel, cb, danger) {
     '<h3>' + h(title) + '</h3>' + (msg ? '<p>' + msg + '</p>' : '') +
     '<div class="btnrow"><button class="btn sec" data-a="dlgNo">Cancel</button>' +
     '<button class="btn' + (danger ? ' no' : '') + '" data-a="dlgYes">' + h(okLabel || 'Yes') + '</button></div>' +
+    '</div></div>';
+}
+/* A message with a single OK button, for "it's done" moments that deserve
+   more than a toast. */
+function showNotice(title, msg, cb) {
+  _dlgCb = cb || null;
+  $('#dialog').innerHTML = '<div class="dlg-ovl"><div class="dlg">' +
+    '<h3>' + h(title) + '</h3>' + (msg ? '<p>' + msg + '</p>' : '') +
+    '<div class="btnrow"><button class="btn" data-a="dlgYes">OK</button></div>' +
     '</div></div>';
 }
 function askText(title, msg, value, placeholder, okLabel, cb) {
@@ -1339,6 +1756,7 @@ function ic(name) {
     lab: 'M20 4h-8L2 14l8 8 10-10V4zm-4.5 5A1.5 1.5 0 1117 7.5 1.5 1.5 0 0115.5 9z',
     rep: 'M4 20h3v-8H4zm6.5 0h3V4h-3zM17 20h3v-12h-3z',
     bell: 'M12 22a2.5 2.5 0 002.45-2h-4.9A2.5 2.5 0 0012 22zm7-6v-5a7 7 0 00-5.5-6.83V3.5a1.5 1.5 0 00-3 0v.67A7 7 0 005 11v5l-2 2v1h18v-1z',
+    shield: 'M12 2l8 3v6c0 5-3.4 9.4-8 11-4.6-1.6-8-6-8-11V5zm-1.2 13.4l6-6-1.4-1.4-4.6 4.6-2.2-2.2-1.4 1.4z',
     user: 'M12 12a5 5 0 10-5-5 5 5 0 005 5zm0 2c-4 0-9 2-9 5v3h18v-3c0-3-5-5-9-5z'
   }[name];
   return '<svg viewBox="0 0 24 24"><path d="' + p + '"/></svg>';
@@ -1369,13 +1787,27 @@ function header(title, sub) {
 function tabbar() {
   var items = [['home', 'Home', 'home'], ['clean', 'Cleaning', 'clean'], ['exp', 'Expiry', 'exp'], ['lab', 'Labels', 'lab'], ['rep', 'Reports', 'rep']];
   if (ME.role === 'staff') items = items.slice(0, 4);
+  /* The User Management panel opens as a sheet over the current tab, so it is
+     a shortcut here rather than a tab of its own. The count is the queue only
+     the Super Admin can clear: sign-ups and forgotten passwords. */
+  var superBtn = '';
+  if (perm().superadmin) {
+    var waiting = PENDING_SIGNUPS + RESET_REQUESTS;
+    superBtn = '<button class="tab" data-a="superDash">' + ic('shield') + '<span>User Management' +
+      (waiting ? '<span class="tcount">' + (waiting > 99 ? '99+' : waiting) + '</span>' : '') + '</span></button>';
+  }
   $('#tabbar').innerHTML = '<div class="tabs"><div class="tabs-in">' + items.map(function (t) {
     return '<button class="tab' + (S.tab === t[0] ? ' on' : '') + '" data-a="tab" data-x="' + t[0] + '">' + ic(t[2]) + '<span>' + t[1] + '</span></button>';
-  }).join('') + '</div></div>';
+  }).join('') + superBtn + '</div></div>';
 }
 
 /* ---------- login ---------- */
 var LOGIN_ERR = '';
+/* The ID that was last typed. A failed attempt re-renders the whole screen,
+   which used to wipe the field and make you retype it — irritating on a phone
+   in a kitchen. The password is deliberately NOT kept: it is never held in a
+   variable any longer than the request needs it. */
+var LOGIN_UID = '';
 function renderLogin() {
   $('#tabbar').innerHTML = '';
   $('#app').innerHTML =
@@ -1384,27 +1816,194 @@ function renderLogin() {
     '<div class="card">' +
     '<div class="b" style="font-size:18px;margin-bottom:2px">Sign in</div>' +
     '<div class="sm muted" style="margin-bottom:14px">Use your own ID and password.</div>' +
-    '<label class="f"><span>User ID</span><input class="inp" id="l_uid" placeholder="e.g. rahul" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false"></label>' +
+    '<label class="f"><span>User ID</span><input class="inp" id="l_uid" value="' + h(LOGIN_UID) + '" placeholder="e.g. rahul" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false"></label>' +
     '<label class="f"><span>Password</span><input class="inp" id="l_pw" type="password" placeholder="••••" autocomplete="current-password" inputmode="numeric"></label>' +
     (LOGIN_ERR ? '<div class="card" style="background:#fdecea;border-color:#f6c9c4;margin:0 0 12px"><b class="sm">' + h(LOGIN_ERR) + '</b></div>' : '') +
-    '<button class="btn" data-a="doLogin">Sign in</button>' +
+    '<button class="btn" id="l_btn" data-a="doLogin">Sign in</button>' +
     '</div>' +
-    '<div class="card sm muted">First time signing in? Your ID is your first name in lower case and your password is <b>' + DEFAULT_PW + '</b>. ' +
+    '<div class="card sm muted">First time signing in? Your ID is your first name in lower case and your password is <b>' + h(DEFAULT_PW) + '</b>. ' +
     'The app will ask you to choose a new password straight away.</div>' +
-    '<div class="sm muted center" style="margin:18px 6px">Forgot your password? Ask Husen, Manish or Rutvik to reset it.<br>Bookends Kitchen Compliance System</div></div>';
-  var f = document.getElementById('l_uid'); if (f) f.focus();
+    '<button class="btn sec" data-a="showSignup" style="margin-bottom:12px">New here? Create your own account</button>' +
+    /* Signing in needs the server, unlike the rest of the app. Say so
+       plainly rather than letting the attempt fail with a vague error. */
+    (navigator.onLine ? '' :
+      '<div class="card sm" style="background:#fff6e5;border-color:#f0dcb0"><b>You are offline.</b> ' +
+      'Signing in needs an internet connection. Once you are back online you can sign in, and the app will keep working offline after that.</div>') +
+    '<button class="btn sec" data-a="showForgot" style="margin-bottom:12px">Forgot password?</button>' +
+    '<div class="sm muted center" style="margin:18px 6px">Bookends Kitchen Compliance System</div></div>';
+  /* After a failed attempt the ID is already filled in, so put the cursor
+     where the work is: the password. */
+  var f = document.getElementById(LOGIN_UID ? 'l_pw' : 'l_uid');
+  if (f) f.focus();
 }
+/* Sends the typed credentials to the backend and lets the server decide
+   (req 4). Nothing is compared on this device, and the password is not kept
+   after the call — the local variable goes out of scope with the function. */
+var LOGIN_BUSY = false;
 function doLogin() {
+  if (LOGIN_BUSY) return;
+
   var uid = (document.getElementById('l_uid').value || '').trim().toLowerCase();
   var pw = document.getElementById('l_pw').value || '';
+  LOGIN_UID = uid;      /* survives the re-render below */
   if (!uid || !pw) { LOGIN_ERR = 'Enter your ID and password'; renderLogin(); return; }
-  var u = userByUid(uid);
-  if (!u || u.pw !== pw) { LOGIN_ERR = 'Wrong ID or password. Please try again.'; renderLogin(); return; }
-  LOGIN_ERR = '';
-  ME = u; localStorage.setItem(SESS, u.id);
-  S.loc = u.loc || 'ALL'; S.tab = 'home';
-  u.lastLogin = Date.now(); save('users', u);
-  render();
+
+  /* Disable the button rather than re-render, so the typed password is not
+     wiped while the request is still in flight. */
+  LOGIN_BUSY = true;
+  var btn = document.getElementById('l_btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Signing in…'; }
+
+  Auth.login(uid, pw).then(function () {
+    LOGIN_BUSY = false;
+    LOGIN_ERR = '';
+    LOGIN_UID = '';
+    S.loc = ME.loc || 'ALL';
+    S.tab = 'home';
+    ensureJobs();          /* the roster has just arrived, so jobs can be assigned */
+    render();              /* router sends them to the password screen if mustChange */
+    refreshPendingSignups();
+    if (!ME.mustChange) startSync();   /* otherwise it starts once they pick a password */
+  }, function (err) {
+    LOGIN_BUSY = false;
+    /* The server's wording is used as-is: it says "Invalid username or
+       password" for both a missing account and a wrong password, so this
+       screen cannot be used to discover which login IDs exist. */
+    LOGIN_ERR = err.message || 'Invalid username or password.';
+    renderLogin();
+  });
+}
+
+/* ---------- self sign-up ----------
+   The person chooses their own name, username and password. The account is
+   created pending: it cannot be used until an admin approves it and sets the
+   role, so nobody can give themselves access by signing up. */
+var SIGNUP_ERR = '';
+var SIGNUP_DRAFT = { name: '', uid: '', loc: '' };   /* kept across a failed attempt; never the password */
+var SIGNUP_BUSY = false;
+
+function renderSignup() {
+  $('#tabbar').innerHTML = '';
+  var dr = SIGNUP_DRAFT;
+  $('#app').innerHTML =
+    '<div class="hdr" style="padding-bottom:26px"><div class="hdr-row"><h1 style="font-size:20px">BOOKENDS<small>Kitchen Operations &amp; Compliance</small></h1></div></div>' +
+    '<div class="wrap">' +
+    '<div class="card">' +
+    '<div class="b" style="font-size:18px;margin-bottom:2px">Create your account</div>' +
+    '<div class="sm muted" style="margin-bottom:14px">Choose your own username and password.</div>' +
+    '<label class="f"><span>Your name</span><input class="inp" id="s_name" value="' + h(dr.name) + '" placeholder="e.g. Suresh Patel" autocomplete="name"></label>' +
+    '<label class="f"><span>Username</span><input class="inp" id="s_uid" value="' + h(dr.uid) + '" placeholder="e.g. suresh" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false">' +
+    '<div class="xs muted" style="margin-top:6px">Lower case letters and numbers only. You will sign in with this.</div></label>' +
+    '<label class="f"><span>Your kitchen</span><select class="inp" id="s_loc">' +
+    '<option value="">— choose —</option>' +
+    LOCATIONS.map(function (L) { return '<option value="' + L.id + '"' + (L.id === dr.loc ? ' selected' : '') + '>' + h(L.name) + '</option>'; }).join('') +
+    '</select></label>' +
+    '<label class="f"><span>Password</span><input class="inp" id="s_pw" type="password" placeholder="At least ' + MIN_PW_LEN + ' characters" autocomplete="new-password"></label>' +
+    '<label class="f"><span>Type it again</span><input class="inp" id="s_pw2" type="password" autocomplete="new-password"></label>' +
+    (SIGNUP_ERR ? '<div class="card" style="background:#fdecea;border-color:#f6c9c4;margin:0 0 12px"><b class="sm">' + h(SIGNUP_ERR) + '</b></div>' : '') +
+    '<button class="btn" id="s_btn" data-a="doSignup">Create account</button>' +
+    '</div>' +
+    '<div class="card sm muted">After you create it, the Super Admin (Husen) approves your account and sets what you can do. You can sign in once it is approved.</div>' +
+    '<button class="btn sec" data-a="backToLogin">I already have an account — sign in</button></div>';
+  var f = document.getElementById(dr.name ? 's_pw' : 's_name'); if (f) f.focus();
+}
+
+function doSignup() {
+  if (SIGNUP_BUSY) return;
+  var name = (document.getElementById('s_name').value || '').trim();
+  var uid = (document.getElementById('s_uid').value || '').trim().toLowerCase();
+  var loc = document.getElementById('s_loc').value;
+  var pw = document.getElementById('s_pw').value || '';
+  var pw2 = document.getElementById('s_pw2').value || '';
+  SIGNUP_DRAFT = { name: name, uid: uid, loc: loc };
+
+  function showError(msg) { SIGNUP_ERR = msg; renderSignup(); }
+
+  /* Instant answers for the obvious mistakes; the server checks all of it again. */
+  if (name.length < 2) { showError('Enter your name'); return; }
+  if (!/^[a-z0-9]{2,32}$/.test(uid)) { showError('Username: 2 to 32 lower case letters or numbers, no spaces'); return; }
+  if (!loc) { showError('Choose your kitchen'); return; }
+  if (pw.length < MIN_PW_LEN) { showError('Password must be at least ' + MIN_PW_LEN + ' characters'); return; }
+  if (pw !== pw2) { showError('The two passwords do not match'); return; }
+  if (pw === DEFAULT_PW) { showError('Please choose something other than ' + DEFAULT_PW); return; }
+
+  SIGNUP_BUSY = true;
+  var btn = document.getElementById('s_btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Creating…'; }
+
+  Api.call('POST', '/api/auth/register',
+    { name: name, uid: uid, loc: loc, password: pw, confirmPassword: pw2 }, { noAuth: true })
+    .then(function (data) {
+      SIGNUP_BUSY = false;
+      SIGNUP_ERR = '';
+      SIGNUP_DRAFT = { name: '', uid: '', loc: '' };
+      LOGIN_UID = data.user.uid;      /* so the login screen is ready for them later */
+      renderSignupDone(data.user);
+    }, function (err) {
+      SIGNUP_BUSY = false;
+      showError(err.message || 'Could not create the account');
+    });
+}
+
+function renderSignupDone(u) {
+  $('#tabbar').innerHTML = '';
+  $('#app').innerHTML =
+    '<div class="hdr" style="padding-bottom:26px"><div class="hdr-row"><h1 style="font-size:20px">BOOKENDS<small>Kitchen Operations &amp; Compliance</small></h1></div></div>' +
+    '<div class="wrap"><div class="card center"><div style="font-size:40px">✅</div>' +
+    '<div class="b" style="font-size:18px;margin-top:6px">Account created</div>' +
+    '<div class="sm muted" style="margin-top:4px">Thanks, ' + h(u.name.split(' ')[0]) + '.</div>' +
+    '<div class="card" style="margin-top:14px;text-align:left"><div class="xs muted b">YOUR USERNAME</div><div class="b" style="font-size:20px">' + h(u.uid) + '</div></div>' +
+    '<div class="sm muted">Your account now needs to be approved by the Super Admin (Husen). Once it is, sign in with this username and the password you just chose.</div></div>' +
+    '<button class="btn" data-a="backToLogin">Back to sign in</button></div>';
+}
+
+/* ---------- forgot password ----------
+   There is no email or SMS here, so this cannot reset anything by itself. It
+   puts a request on the Super Admin's dashboard; they set a temporary
+   password and hand it over, and the person chooses their own at next
+   sign-in. The server gives the same reply whether or not the username
+   exists, so this screen reveals nothing about who has an account. */
+var FORGOT_ERR = '';
+var FORGOT_BUSY = false;
+
+function renderForgot() {
+  $('#tabbar').innerHTML = '';
+  $('#app').innerHTML =
+    '<div class="hdr" style="padding-bottom:26px"><div class="hdr-row"><h1 style="font-size:20px">BOOKENDS<small>Kitchen Operations &amp; Compliance</small></h1></div></div>' +
+    '<div class="wrap"><div class="card">' +
+    '<div class="b" style="font-size:18px;margin-bottom:2px">Forgot your password?</div>' +
+    '<div class="sm muted" style="margin-bottom:14px">Enter your username. The Super Admin (Husen) will set a temporary password for you.</div>' +
+    '<label class="f"><span>Username</span><input class="inp" id="f_uid" value="' + h(LOGIN_UID) + '" placeholder="e.g. rahul" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false"></label>' +
+    (FORGOT_ERR ? '<div class="card" style="background:#fdecea;border-color:#f6c9c4;margin:0 0 12px"><b class="sm">' + h(FORGOT_ERR) + '</b></div>' : '') +
+    '<button class="btn" id="f_btn" data-a="doForgot">Ask for a new password</button></div>' +
+    '<button class="btn sec" data-a="backToLogin">Back to sign in</button></div>';
+  var f = document.getElementById('f_uid'); if (f) f.focus();
+}
+
+function doForgot() {
+  if (FORGOT_BUSY) return;
+  var uid = (document.getElementById('f_uid').value || '').trim().toLowerCase();
+  if (!uid) { FORGOT_ERR = 'Enter your username'; renderForgot(); return; }
+
+  FORGOT_BUSY = true;
+  var btn = document.getElementById('f_btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
+
+  Api.call('POST', '/api/auth/forgot', { uid: uid }, { noAuth: true }).then(function (data) {
+    FORGOT_BUSY = false; FORGOT_ERR = '';
+    LOGIN_UID = uid;
+    $('#app').innerHTML =
+      '<div class="hdr" style="padding-bottom:26px"><div class="hdr-row"><h1 style="font-size:20px">BOOKENDS<small>Kitchen Operations &amp; Compliance</small></h1></div></div>' +
+      '<div class="wrap"><div class="card center"><div style="font-size:40px">📨</div>' +
+      '<div class="b" style="font-size:18px;margin-top:6px">Request sent</div>' +
+      '<div class="sm muted" style="margin-top:8px">' + h(data.message) + '</div>' +
+      '<div class="sm muted" style="margin-top:8px">When you sign in with the temporary password, you will be asked to choose your own.</div></div>' +
+      '<button class="btn" data-a="backToLogin">Back to sign in</button></div>';
+  }, function (err) {
+    FORGOT_BUSY = false;
+    FORGOT_ERR = err.message || 'Could not send the request';
+    renderForgot();
+  });
 }
 
 /* ---------- forced password change ---------- */
@@ -1415,31 +2014,60 @@ function renderSetPassword() {
     '<div class="hdr" style="padding-bottom:22px"><div class="hdr-row"><h1 style="font-size:19px">Choose your password<small>' + h(ME.name) + ' · ID ' + h(ME.uid) + '</small></h1></div></div>' +
     '<div class="wrap"><div class="card sm muted">For your security you must replace the starting password before you use the app. Keep it to yourself — everything you do is recorded under your name.</div>' +
     '<div class="card">' +
-    '<label class="f"><span>New password</span><input class="inp" id="p_new" type="password" placeholder="At least 4 characters" autocomplete="new-password"></label>' +
+    '<label class="f"><span>New password</span><input class="inp" id="p_new" type="password" placeholder="At least ' + MIN_PW_LEN + ' characters" autocomplete="new-password"></label>' +
     '<label class="f"><span>Type it again</span><input class="inp" id="p_new2" type="password" autocomplete="new-password"></label>' +
     (PW_ERR ? '<div class="card" style="background:#fdecea;border-color:#f6c9c4;margin:0 0 12px"><b class="sm">' + h(PW_ERR) + '</b></div>' : '') +
-    '<button class="btn" data-a="savePw">Save and continue</button></div>' +
+    '<button class="btn" id="p_btn" data-a="savePw">Save and continue</button></div>' +
     '<button class="btn sec" data-a="logout">Sign in as someone else</button></div>';
 }
+
+/* The new password is hashed on the server; this only collects and posts it.
+   The server re-checks every rule, so the local checks below are purely so
+   the user gets an instant answer for the obvious mistakes. */
+var PW_BUSY = false;
 function savePw(force) {
+  if (PW_BUSY) return;
+
   var a = document.getElementById('p_new').value || '', b = document.getElementById('p_new2').value || '';
-  if (a.length < 4) { PW_ERR = 'Password must be at least 4 characters'; force ? renderSetPassword() : changePwSheet(); return; }
-  if (a !== b) { PW_ERR = 'The two passwords do not match'; force ? renderSetPassword() : changePwSheet(); return; }
-  if (a === DEFAULT_PW) { PW_ERR = 'Please choose something other than ' + DEFAULT_PW; force ? renderSetPassword() : changePwSheet(); return; }
-  PW_ERR = '';
-  ME.pw = a; ME.mustChange = false; save('users', ME);
-  logAct('user', 'Password changed', ME.loc);
-  if (force) { render(); } else { closeSheet(); render(); }
-  toast('Password updated');
+  var cur = document.getElementById('p_cur');
+  var currentPassword = cur ? (cur.value || '') : '';
+
+  function showError(msg) {
+    PW_ERR = msg;
+    if (force) renderSetPassword(); else { closeSheet(); changePwSheet(); }
+  }
+
+  if (a.length < MIN_PW_LEN) { showError('Password must be at least ' + MIN_PW_LEN + ' characters'); return; }
+  if (a !== b) { showError('The two passwords do not match'); return; }
+  if (a === DEFAULT_PW) { showError('Please choose something other than ' + DEFAULT_PW); return; }
+
+  PW_BUSY = true;
+  var btn = document.getElementById('p_btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+
+  Auth.changePassword(currentPassword, a, b).then(function () {
+    PW_BUSY = false;
+    PW_ERR = '';
+    logAct('user', 'Password changed', ME.loc);
+    if (force) { render(); startSync(); } else { closeSheet(); render(); }
+    toast('Password updated');
+  }, function (err) {
+    PW_BUSY = false;
+    showError(err.message || 'Could not change your password');
+  });
 }
+
 function changePwSheet() {
   openSheet('Change your password',
     '<div class="card sm muted">Your ID is <b>' + h(ME.uid) + '</b>. It cannot be changed — only an Execution Head can do that.</div>' +
     '<div class="card">' +
-    '<label class="f"><span>New password</span><input class="inp" id="p_new" type="password" autocomplete="new-password"></label>' +
+    /* Asked for outside the forced-change flow: it stops a phone left
+       unlocked on a counter being used to take the account over. */
+    '<label class="f"><span>Current password</span><input class="inp" id="p_cur" type="password" autocomplete="current-password"></label>' +
+    '<label class="f"><span>New password</span><input class="inp" id="p_new" type="password" placeholder="At least ' + MIN_PW_LEN + ' characters" autocomplete="new-password"></label>' +
     '<label class="f"><span>Type it again</span><input class="inp" id="p_new2" type="password" autocomplete="new-password"></label>' +
     (PW_ERR ? '<div class="card" style="background:#fdecea;border-color:#f6c9c4;margin:0 0 12px"><b class="sm">' + h(PW_ERR) + '</b></div>' : '') +
-    '<button class="btn" data-a="savePwSheet">Save new password</button></div>');
+    '<button class="btn" id="p_btn" data-a="savePwSheet">Save new password</button></div>');
 }
 
 /* ---------- SIMPLE HOME (kitchen staff) ---------- */
@@ -1482,6 +2110,50 @@ function bigBtn(icon, bg, title, sub, n, act, x) {
 }
 
 /* ---------- home / main dashboard ---------- */
+/* ---------- sign-ups waiting for approval ----------
+   The Super Admin has no other way to find out that someone has signed up,
+   so the count is fetched for them and shown on their home screen. Nobody
+   else can approve, so nobody else is shown it. Re-renders only when the number actually changes. */
+var PENDING_SIGNUPS = 0;
+var RESET_REQUESTS = 0;      /* "Forgot password?" requests not yet answered */
+function refreshPendingSignups() {
+  if (!ME || ME.mustChange || !perm().superadmin || !Api.token) return;
+  Api.get('/api/admin/users').then(function (data) {
+    var list = data.users || [];
+    var n = list.filter(function (u) { return u.pending; }).length;
+    var r = list.filter(function (u) { return u.resetRequestedAt && !u.pending; }).length;
+    if (n === PENDING_SIGNUPS && r === RESET_REQUESTS) return;
+    PENDING_SIGNUPS = n; RESET_REQUESTS = r;
+    tabbar();                    /* sidebar count, on every tab */
+    if (S.tab === 'home' && !$('#modal').innerHTML) render();
+  }, function () { /* offline or signed out — keep the last known count */ });
+}
+setInterval(function () { if (!document.hidden) refreshPendingSignups(); }, 60000);
+document.addEventListener('visibilitychange', function () { if (!document.hidden) refreshPendingSignups(); });
+
+/* One card per queue, so each says plainly what is waiting. */
+function pendingSignupsCard() {
+  if (!perm().superadmin) return '';
+  var out = '';
+  if (PENDING_SIGNUPS) {
+    var n = PENDING_SIGNUPS;
+    out += '<div class="card" data-a="users" style="cursor:pointer;background:#fff6e5;border-color:#f0dcb0">' +
+      '<div class="row"><div style="font-size:26px">👤</div><div class="grow">' +
+      '<div class="b">' + n + ' new account' + (n === 1 ? '' : 's') + ' waiting for approval</div>' +
+      '<div class="sm muted">Someone signed up. Tap to choose their role and approve or reject.</div>' +
+      '</div><div class="b" style="color:var(--org)">Review ›</div></div></div>';
+  }
+  if (RESET_REQUESTS) {
+    var r = RESET_REQUESTS;
+    out += '<div class="card" data-a="superDash" style="cursor:pointer;background:#fff6e5;border-color:#f0dcb0">' +
+      '<div class="row"><div style="font-size:26px">🔑</div><div class="grow">' +
+      '<div class="b">' + r + ' password reset request' + (r === 1 ? '' : 's') + '</div>' +
+      '<div class="sm muted">Someone forgot their password. Tap to set a temporary one.</div>' +
+      '</div><div class="b" style="color:var(--org)">Open ›</div></div></div>';
+  }
+  return out;
+}
+
 function renderHome() {
   if (ME.role === 'staff') { renderSimpleHome(); return; }
   var wk = S.week, p = perm();
@@ -1492,6 +2164,7 @@ function renderHome() {
 
   var html = header('BOOKENDS KITCHEN COMPLIANCE', ROLES[ME.role].label + ' · ' + (scope ? lname(scope) : 'All locations'));
   html += '<div class="wrap">';
+  html += pendingSignupsCard();
 
   /* hero */
   html += '<div class="card" style="background:linear-gradient(135deg,var(--brand),var(--brand2));border:0;color:#fff;text-align:center;padding:20px 14px">' +
@@ -1539,6 +2212,8 @@ function renderHome() {
     (p.approve ? '<button class="btn sec" data-a="tab" data-x="clean">☑ Approvals (' + pendingApprovals().length + ')</button>' : '<button class="btn sec" data-a="tab" data-x="lab">🏷 Print label</button>') +
     '</div>';
 
+  html += tuesdayCard(scope, wk);
+
   /* location league table */
   if (p.all) {
     html += '<div class="sec-t">Locations · this week</div><div class="loc-grid">';
@@ -1570,6 +2245,37 @@ function renderHome() {
   html += '<div style="height:20px"></div></div>';
   $('#app').innerHTML = html;
   tabbar();
+}
+/* Home dashboard: this week's every-Tuesday jobs. One location shows the jobs
+   themselves; "All locations" shows how far each kitchen has got. */
+function tuesdayCard(scope, wk) {
+  var locs = scope ? [locById(scope)] : visibleLocations();
+  var rows = locs.map(function (L) {
+    var ts = tasksFor(L.id, wk, 'W').filter(isTuesdayJob);
+    return { L: L, ts: ts, done: ts.filter(function (t) { return t.status === 'completed'; }).length };
+  });
+  var total = 0, done = 0;
+  rows.forEach(function (r) { total += r.ts.length; done += r.done; });
+
+  var out = '<div class="sec-t">Cleaning · every Tuesday</div><div class="card pad0">';
+  if (!total) {
+    out += '<div class="sm muted" style="padding:12px 14px">' + TUESDAY_JOBS.map(function (j) { return h(j.area.split(' — ')[0]); }).join(' · ') +
+      '<div class="xs" style="margin-top:6px">Nothing due this week.' +
+      '</div></div>';
+  } else if (scope) {
+    out += '<div class="xs muted b" style="padding:10px 14px 4px">' + done + ' of ' + total + ' done · due ' + h(fmtD(rows[0].ts[0].due)) + '</div>' +
+      rows[0].ts.map(taskRow).join('');
+  } else {
+    out += '<div class="xs muted b" style="padding:10px 14px 4px">' + done + ' of ' + total + ' done across ' + rows.length + ' locations</div>' +
+      rows.map(function (r) {
+        var pct = r.ts.length ? Math.round(r.done / r.ts.length * 100) : 0;
+        return '<button class="lrow" style="width:100%" data-a="openLoc" data-x="' + r.L.id + ':clean:tuesday">' +
+          '<span class="grow"><span class="t trunc">' + h(r.L.name) + '</span>' +
+          '<div class="xs muted" style="margin:3px 0 5px">' + r.done + ' of ' + r.ts.length + ' Tuesday jobs done</div>' + bar(pct) + '</span>' +
+          '<span class="chev">›</span></button>';
+      }).join('');
+  }
+  return out + '</div>';
 }
 function statCard(v, l, c) { return '<div class="stat"><b style="color:' + c + '">' + v + '</b><span>' + l + '</span></div>'; }
 function tapStat(v, l, c, act, x) {
@@ -1619,7 +2325,8 @@ function alertsSheet() {
 /* ---------- profile sheet ---------- */
 function meSheet() {
   var p = perm();
-  var caps = { exec: ['Full access to all 8 locations', 'Approve / reject any cleaning task', 'View & export every report', 'Create / edit the cleaning checklist', 'Create users & reset passwords'],
+  var caps = { superadmin: ['Full access to all 8 locations', 'Approve or reject new sign-ups — only you can', 'Approve / reject any cleaning task', 'View & export every report', 'Create users & reset passwords'],
+    exec: ['Full access to all 8 locations', 'Approve / reject any cleaning task', 'View & export every report', 'Create / edit the cleaning checklist', 'Create users & reset passwords'],
     aexec: ['Full access to all 8 locations', 'Approve / reject any cleaning task', 'View & export every report', 'Create / edit the cleaning checklist', 'Create users & reset passwords'],
     admin: ['Full access to all 8 locations', 'View & export all reports', 'Create / edit checklists', 'Manage users & roles'],
     hok: ['View all 8 locations', 'Monitor compliance live', 'Approve / reject cleaning tasks', 'View & export reports'],
@@ -1634,6 +2341,7 @@ function meSheet() {
     caps.map(function (c) { return '<li style="margin:5px 0">' + h(c) + '</li>'; }).join('') + '</ul></div>' +
     '<button class="btn sec" data-a="changePw" style="margin-bottom:10px">🔒 Change my password</button>' +
     (p.manage ? '<button class="btn sec" data-a="cloudSetup" style="margin-bottom:10px">☁️ Cloud sync — ' + h(Cloud.label()) + '</button>' : '') +
+    (p.superadmin ? '<button class="btn" data-a="superDash" style="margin-bottom:10px">🛡️ User Management panel</button>' : '') +
     (p.manage ? '<button class="btn sec" data-a="users" style="margin-bottom:10px">👥 People, roles &amp; passwords</button>' +
       '<button class="btn sec" data-a="checklist" style="margin-bottom:10px">📋 Cleaning checklist</button>' +
       '<button class="btn sec" data-a="activity" style="margin-bottom:10px">🕘 Recent activity</button>' : '') +
@@ -1721,6 +2429,7 @@ function taskRow(t) {
     '<span class="grow"><span class="t trunc">' + h(t.area) + '</span>' +
     '<div class="xs muted" style="margin:2px 0 5px">' + h(t.zone) + ' · ' + h(uname(t.assigned).split(' ')[0]) + ' · due ' + fmtD(t.due) + '</div>' +
     statusPill(t) + (t.freq === 'M' ? ' ' + pill('MONTHLY', 'p-blu') : '') +
+    (fixedDay(t) != null ? ' ' + pill('EVERY ' + DAY_NAMES[fixedDay(t)].toUpperCase(), 'p-yel') : '') +
     (t.status !== 'pending' && !t.before && !t.after ? ' ' + pill('NO PHOTO', 'p-org') : '') +
     '</span><span class="chev">›</span></button>';
 }
@@ -1730,7 +2439,11 @@ function renderClean() {
   var stW = cleaningStatsRange(loc, from, to, 'W'), stM = cleaningStatsRange(loc, from, to, 'M');
   var all = tasksInRange(loc, from, to);
   var f = S.cleanFilter;
-  var list = all.filter(function (t) {
+  /* Tuesday jobs are looked up over the whole Monday–Sunday weeks the range
+     touches, so picking "16–20 Sep" still shows the job due Tue 15 Sep. */
+  var tueFrom = ymd(mondayOf(parseD(from))), tueTo = ymd(addDays(mondayOf(parseD(to)), 6));
+  var tue = tasksInRange(loc, tueFrom, tueTo).filter(isTuesdayJob);
+  var list = f === 'tuesday' ? tue : all.filter(function (t) {
     if (f === 'weekly') return t.freq === 'W';
     if (f === 'monthly') return t.freq === 'M';
     if (f === 'pending') return t.status === 'pending';
@@ -1758,7 +2471,19 @@ function renderClean() {
     '<label class="f"><span>To</span><input class="inp" id="rf_to" type="date" value="' + to + '" max="' + ymd(today()) + '"></label></div>' +
     '<div class="xs muted center" style="margin-top:8px">Showing jobs due ' + h(fmtD(from)) + ' – ' + h(fmtD(to)) + '</div></div>';
 
-  var chips = [['all', 'All ' + all.length], ['weekly', 'Weekly ' + stW.total], ['monthly', 'Monthly ' + stM.total],
+  /* ---- every-Tuesday jobs, kept together in their own section ---- */
+  if (f !== 'tuesday') {
+    var tueDone = tue.filter(function (t) { return t.status === 'completed'; }).length;
+    html += '<div class="sec-t">Every Tuesday · ' + TUESDAY_JOBS.length + ' job' + (TUESDAY_JOBS.length === 1 ? '' : 's') + '</div><div class="card pad0">' +
+      (tue.length
+        ? '<div class="xs muted b" style="padding:10px 14px 4px">' + tueDone + ' of ' + tue.length + ' done · week of ' + h(fmtD(tueFrom)) + ' – ' + h(fmtD(tueTo)) + '</div>' + tue.map(taskRow).join('')
+        : '<div class="sm muted" style="padding:12px 14px">' + TUESDAY_JOBS.map(function (j) { return h(j.area.split(' — ')[0]); }).join(' · ') +
+          '<div class="xs" style="margin-top:6px">None due in the week of ' + h(fmtD(tueFrom)) + ' – ' + h(fmtD(tueTo)) + '.' +
+          '</div></div>') +
+      '</div>';
+  }
+
+  var chips = [['all', 'All ' + all.length], ['weekly', 'Weekly ' + stW.total], ['monthly', 'Monthly ' + stM.total], ['tuesday', 'Tuesday ' + tue.length],
   ['pending', 'Pending ' + st.pending], ['approve', 'To approve ' + (st.done - st.approved)],
   ['rejected', 'Rejected ' + st.rejected], ['nophoto', 'No photo ' + st.noPhoto], ['done', 'Done ' + st.done]];
   if (ME.role === 'staff') chips.unshift(['mine', 'My jobs']);
@@ -1767,7 +2492,8 @@ function renderClean() {
   }).join('') + '</div>';
 
   var zones = {};
-  list.forEach(function (t) { (zones[t.zone] = zones[t.zone] || []).push(t); });
+  /* on "All", Tuesday jobs are already listed in their own section above */
+  list.forEach(function (t) { if (f === 'all' && isTuesdayJob(t)) return; (zones[t.zone] = zones[t.zone] || []).push(t); });
   html += Object.keys(zones).length ? Object.keys(zones).map(function (z) {
     return '<div class="sec-t">' + h(z) + '</div><div class="card pad0">' + zones[z].map(taskRow).join('') + '</div>';
   }).join('') : '<div class="card"><div class="empty"><div class="ic">🧼</div>Nothing here</div></div>';
@@ -1786,13 +2512,13 @@ function taskSheet(id) {
   var isMine = true; /* anyone working in that kitchen may record the clean; the app logs who did it */
   var body = '<div class="card"><div class="row" style="align-items:flex-start"><div class="grow">' +
     '<div class="b" style="font-size:17px;line-height:1.25">' + h(t.area) + '</div>' +
-    '<div class="sm muted">' + h(t.zone) + ' · ' + (t.freq === 'M' ? 'Monthly heavy job' : 'Weekly job') + ' · ' + h(lname(t.loc)) + '</div></div>' + statusPill(t) + '</div>' +
+    '<div class="sm muted">' + h(t.zone) + ' · ' + (t.freq === 'M' ? 'Monthly heavy job' : fixedDay(t) != null ? 'Weekly job · every ' + DAY_NAMES[fixedDay(t)] : 'Weekly job') + ' · ' + h(lname(t.loc)) + '</div></div>' + statusPill(t) + '</div>' +
     '<div class="grid2" style="margin-top:12px">' +
     kv('Assigned to', uname(t.assigned)) + kv('Due date', fmtD(t.due)) +
     kv('Done by', t.completedBy ? uname(t.completedBy) : t.completedAt ? uname(t.assigned) : '—') +
     kv('Completed', t.completedAt ? fmtDT(t.completedAt) : '—') + '</div>' +
-    (t.status === 'rejected' ? '<div class="card" style="background:#fdecea;border-color:#f6c9c4;margin:12px 0 0"><b class="sm">Rejected — ' + h(uname(t.approvedBy)) + '</b><div class="sm">' + h(t.reject) + '</div></div>' : '') +
-    (t.approved ? '<div class="sm" style="margin-top:10px;color:var(--grn)"><b>✓ Approved by ' + h(uname(t.approvedBy)) + '</b></div>' : '') +
+    (t.status === 'rejected' ? '<div class="card" style="background:#fdecea;border-color:#f6c9c4;margin:12px 0 0"><b class="sm">Rejected — ' + h(uname(t.approvedBy)) + (t.approvedAt ? ' · ' + h(fmtDT(t.approvedAt)) : '') + '</b><div class="sm">' + h(t.reject) + '</div></div>' : '') +
+    (t.approved ? '<div class="sm" style="margin-top:10px;color:var(--grn)"><b>✓ Approved by ' + h(uname(t.approvedBy)) + (t.approvedAt ? ' · ' + h(fmtDT(t.approvedAt)) : '') + '</b></div>' : '') +
     '</div>';
 
   var hasPh = !!(t.before || t.after);
@@ -1813,14 +2539,14 @@ function taskSheet(id) {
   if (canDo && !p.approve && t.status === 'completed' && !t.approved) {
     body += '<div class="card sm muted center" style="margin-top:10px">Waiting for manager approval</div>';
   }
-  if (canDo && t.status !== 'pending') {
+  if (canDo && p.approve && t.status !== 'pending') {
     body += '<div style="height:10px"></div><button class="btn sec" data-a="reopen" data-x="' + t.id + '">↺ Re-open task</button>';
   }
   openSheet('Cleaning task', body);
 }
 function kv(k, v) { return '<div><div class="xs muted b" style="text-transform:uppercase;letter-spacing:.4px">' + h(k) + '</div><div class="sm b">' + h(v) + '</div></div>'; }
 function photoBox(t) {
-  var v = t.before || t.after, p = perm(), can = !p.readonly && (p.all || ME.loc === t.loc);
+  var v = t.before || t.after, p = perm(), can = !p.readonly && (p.all || ME.loc === t.loc) && (p.approve || t.approved !== true);
   return '<div class="photo tall" ' + (can ? 'data-a="shoot" data-x="' + t.id + '"' : '') + '>' +
     (v ? '<img src="' + photoSrc(v) + '"><span class="tag">PHOTO</span>' +
       (can ? '<button class="x" data-a="unshoot" data-x="' + t.id + '">✕</button>' : '')
@@ -2047,10 +2773,31 @@ function startScan() {
     }, 400);
   }).catch(function () { msg.textContent = 'Camera permission denied. Type the label code below.'; });
 }
+/* Product ids used to be kitchen code + a count of products on that phone,
+   so two phones could make the same id and one product would overwrite the
+   other. Now: kitchen code + time + random, unique across phones and still
+   short enough to type from a label (e.g. P-CPP-MF3K9Q-7T2). */
+function newProductId(loc) {
+  var code = (locById(loc) || {}).code || 'X';
+  var rnd = '';
+  try { var b = new Uint8Array(3); crypto.getRandomValues(b); rnd = Array.prototype.map.call(b, function (x) { return (x % 36).toString(36); }).join(''); }
+  catch (e) { rnd = Math.random().toString(36).slice(2, 5); }
+  var id;
+  do { id = ('P-' + code + '-' + Date.now().toString(36) + '-' + rnd).toUpperCase(); rnd = Math.random().toString(36).slice(2, 5); }
+  while (DB.products.some(function (p) { return p.id === id; }));
+  return id;
+}
+
+/* Reads whatever a label QR holds: the app link (.../#p=ID, what labels
+   print today), the offline form (BOOKENDS|ID|name|EXP:date), the older
+   BK|x|ID form, or a code typed by hand. */
 function handleScan(text) {
-  var id = null;
-  if (text.indexOf('BK|') === 0) id = text.split('|')[2];
-  else id = text.trim().toUpperCase();
+  var id = null, raw = String(text || '').trim(), m;
+  if ((m = raw.match(/#p=([A-Za-z0-9-]+)/))) id = m[1];
+  else if (raw.indexOf('BOOKENDS|') === 0) id = raw.split('|')[1];
+  else if (raw.indexOf('BK|') === 0) id = raw.split('|')[2];
+  else id = raw;
+  id = String(id || '').trim().toUpperCase();
   var p = DB.products.filter(function (x) { return x.id === id; })[0];
   closeSheet();
   if (p) { productSheet(p.id); toast('Scanned ' + p.name); }
@@ -2240,28 +2987,227 @@ function csvExport() {
 }
 
 /* ---------------- ADMIN ---------------- */
+/* The people list comes from GET /api/admin/users rather than the local
+   roster, because it shows the login bookkeeping the roster deliberately
+   leaves out: first-login status, last sign-in and account age (req 6).
+   The sheet opens immediately and fills in when the request lands. */
 function usersSheet() {
+  openSheet('People, roles & passwords',
+    '<div class="card center sm muted" id="u_loading">Loading accounts…</div>');
+
+  Api.get('/api/admin/users').then(function (data) {
+    renderUsersSheet(data.users || []);
+  }, function (err) {
+    var el = document.getElementById('u_loading');
+    if (el) {
+      el.className = 'card sm';
+      el.style.background = '#fdecea';
+      el.innerHTML = '<b>' + h(err.message || 'Could not load the account list') + '</b>';
+    }
+  });
+}
+
+function renderUsersSheet(users) {
   var body = '<button class="btn" data-a="addUser" style="margin-bottom:12px">＋ Create a new user</button>' +
-    '<div class="card sm muted">Everyone signs in with their own ID and password. Change a role from the dropdown, tap 🔑 to reset a forgotten password back to <b>' + DEFAULT_PW + '</b>, or ✕ to remove someone who has left.</div>';
-  ['exec', 'aexec', 'admin', 'hok', 'manager', 'staff', 'auditor'].forEach(function (rk) {
-    var us = DB.users.filter(function (u) { return u.role === rk; });
+    '<div class="card sm muted">Everyone signs in with their own ID and password. Passwords are stored only as an encrypted hash — nobody, including you, can read them back. Change a role from the dropdown, tap 🔑 to reset a forgotten password back to <b>' + h(DEFAULT_PW) + '</b>, or ✕ to remove someone who has left.</div>';
+
+  /* Self sign-ups waiting for a decision come first, since they are the only
+     thing on this screen someone is actively waiting on. The admin picks the
+     role and kitchen here — the person chose only their username and password. */
+  var pending = users.filter(function (u) { return u.pending; });
+  if (perm().superadmin && pending.length !== PENDING_SIGNUPS) {
+    PENDING_SIGNUPS = pending.length;
+    if (S.tab === 'home') render();      /* updates the notice behind the sheet */
+  }
+  /* Other admins can see that people are waiting, but only the Super Admin
+     decides. The server enforces this; the note just says who to ask. */
+  if (pending.length && !perm().superadmin) {
+    body += '<div class="card sm" style="background:#fff6e5;border-color:#f0dcb0"><b>' + pending.length + ' new sign-up' + (pending.length === 1 ? '' : 's') +
+      ' waiting for approval</b><div class="muted" style="margin-top:4px">Only the Super Admin (Husen) can approve or reject them: ' +
+      pending.map(function (u) { return h(u.name) + ' (' + h(u.uid) + ')'; }).join(', ') + '.</div></div>';
+  }
+  if (pending.length && perm().superadmin) {
+    body += '<div class="sec-t" style="color:var(--org)">Waiting for approval (' + pending.length + ')</div><div class="card pad0">' +
+      pending.map(function (u) {
+        return '<div class="lrow" style="flex-wrap:wrap;row-gap:8px">' +
+          '<span class="thumb" style="display:grid;place-items:center;font-weight:800;color:var(--org);font-size:13px">' + h(initials(u.name)) + '</span>' +
+          '<span class="grow"><span class="t sm">' + h(u.name) + '</span>' +
+          '<div class="xs muted">Username <b>' + h(u.uid) + '</b> · signed up ' + h(fmtDT(u.createdAt)) + '</div>' +
+          '<div class="xs muted">Says they work at ' + (u.loc ? h(lname(u.loc)) : '—') + '</div></span>' +
+          '<select class="inp" id="ap_role_' + h(u.id) + '" style="width:118px;min-height:42px;font-size:12.5px;padding:6px 8px">' +
+          assignableRoles().map(function (k) { return '<option value="' + k + '"' + (k === 'staff' ? ' selected' : '') + '>' + ROLES[k].label + '</option>'; }).join('') +
+          '</select>' +
+          '<select class="inp" id="ap_loc_' + h(u.id) + '" style="width:130px;min-height:42px;font-size:12.5px;padding:6px 8px">' +
+          LOCATIONS.map(function (L) { return '<option value="' + L.id + '"' + (L.id === u.loc ? ' selected' : '') + '>' + h(L.name) + '</option>'; }).join('') +
+          '</select>' +
+          '<button class="iconbtn" style="background:#e3f4ea;color:var(--grn);width:38px;height:38px;font-size:15px" data-a="approveUser" data-x="' + h(u.id) + '" title="Approve">✓</button>' +
+          '<button class="iconbtn" style="background:#f6e7e5;color:var(--red);width:38px;height:38px" data-a="rejectUser" data-x="' + h(u.id) + '" data-n="' + h(u.name) + '" title="Reject">✕</button>' +
+          '</div>';
+      }).join('') + '</div>';
+  }
+
+  ['superadmin', 'exec', 'aexec', 'admin', 'hok', 'manager', 'staff', 'auditor'].forEach(function (rk) {
+    var us = users.filter(function (u) { return u.role === rk && !u.pending; });
     if (!us.length) return;
     body += '<div class="sec-t">' + ROLES[rk].label + ' (' + us.length + ')</div><div class="card pad0">' +
       us.map(function (u) {
+        /* req 6, shown to the admin: has this person ever signed in, when
+           was the last time, and are they still on the issued password. */
+        var loginLine = u.firstLogin
+          ? '<div class="xs" style="color:var(--org);font-weight:700">Has never signed in</div>'
+          : '<div class="xs muted">Last sign-in ' + h(fmtDT(u.lastLogin)) + ' · ' + u.loginCount + ' total</div>';
+
         return '<div class="lrow" style="flex-wrap:wrap;row-gap:8px"><span class="thumb" style="display:grid;place-items:center;font-weight:800;color:var(--brand);font-size:13px">' + h(initials(u.name)) + '</span>' +
           '<span class="grow"><span class="t sm">' + h(u.name) + '</span>' +
           '<div class="xs muted">ID <b>' + h(u.uid) + '</b> · ' + (u.loc ? h(lname(u.loc)) : 'All 8 locations') + '</div>' +
+          loginLine +
           (u.mustChange ? '<div class="xs" style="color:var(--org);font-weight:700">Still on the starting password</div>' : '') + '</span>' +
-          '<select class="inp" style="width:118px;min-height:42px;font-size:12.5px;padding:6px 8px" data-a="chrole" data-x="' + u.id + '">' +
-          Object.keys(ROLES).map(function (k) { return '<option value="' + k + '"' + (k === u.role ? ' selected' : '') + '>' + ROLES[k].label + '</option>'; }).join('') +
-          '</select>' +
-          '<button class="iconbtn" style="background:#eef0ee;color:var(--ink);width:38px;height:38px;font-size:15px" data-a="resetPw" data-x="' + u.id + '">🔑</button>' +
-          (u.id === ME.id ? '' : '<button class="iconbtn" style="background:#f6e7e5;color:var(--red);width:38px;height:38px" data-a="delUser" data-x="' + u.id + '">✕</button>') +
+          /* The Super Admin's row has no controls: its role is fixed on the
+             server, and nobody else may reset or remove it. The server
+             refuses those anyway; this just avoids offering buttons that fail.
+             Husen changes his own password from "Change my password". */
+          (ROLES[u.role] && ROLES[u.role].superadmin
+            ? '<span class="xs b" style="color:var(--brand);padding:6px 10px">Super Admin</span>'
+            : '<select class="inp" style="width:118px;min-height:42px;font-size:12.5px;padding:6px 8px" data-a="chrole" data-x="' + u.id + '">' +
+              assignableRoles().map(function (k) { return '<option value="' + k + '"' + (k === u.role ? ' selected' : '') + '>' + ROLES[k].label + '</option>'; }).join('') +
+              '</select>' +
+              '<button class="iconbtn" style="background:#eef0ee;color:var(--ink);width:38px;height:38px;font-size:15px" data-a="resetPw" data-x="' + u.id + '">🔑</button>' +
+              (u.id === ME.id ? '' : '<button class="iconbtn" style="background:#f6e7e5;color:var(--red);width:38px;height:38px" data-a="delUser" data-x="' + u.id + '">✕</button>')) +
           '</div>';
       }).join('') + '</div>';
   });
-  openSheet('People, roles & passwords', body);
+
+  /* Swap the sheet's body in place, so the sheet does not reopen and lose
+     its scroll position. The stack entry is updated too, so closing a
+     nested sheet comes back to the loaded list rather than to "Loading…". */
+  var host = document.querySelector('#modal .sheet-b');
+  if (!host) return;
+  host.innerHTML = body;
+  for (var i = SHEET_STACK.length - 1; i >= 0; i--) {
+    if (SHEET_STACK[i].title === 'People, roles & passwords') { SHEET_STACK[i].body = body; break; }
+  }
 }
+/* ---------------- USER MANAGEMENT PANEL (Super Admin only) ----------------
+   Everyone's account in one place, plus the two queues only the Super Admin
+   acts on: password reset requests and sign-ups waiting for approval.
+
+   Passwords are NOT shown, because they cannot be: only a one-way bcrypt hash
+   is stored (requirement 3). What the Super Admin can do instead is set a new
+   password for anyone and see it once, which covers the real need — getting
+   someone back in. */
+function superSheet() {
+  openSheet('User Management panel', '<div class="card center sm muted" id="sa_loading">Loading accounts…</div>');
+  Api.get('/api/admin/users').then(function (data) {
+    renderSuperSheet(data.users || []);
+  }, function (err) {
+    var el = document.getElementById('sa_loading');
+    if (el) { el.className = 'card sm'; el.style.background = '#fdecea'; el.innerHTML = '<b>' + h(err.message || 'Could not load accounts') + '</b>'; }
+  });
+}
+
+function superStatusLine(u) {
+  if (u.pending) return '<span style="color:var(--org);font-weight:700">Waiting for approval</span>';
+  if (u.disabled) return '<span style="color:var(--red);font-weight:700">Disabled</span>';
+  if (u.firstLogin) return '<span style="color:var(--org);font-weight:700">Has never signed in</span>';
+  return 'Last sign-in ' + h(fmtDT(u.lastLogin)) + ' · ' + u.loginCount + ' total';
+}
+
+function renderSuperSheet(users) {
+  var active = users.filter(function (u) { return !u.pending; });
+  var pending = users.filter(function (u) { return u.pending; });
+  var resets = users.filter(function (u) { return u.resetRequestedAt && !u.pending; })
+    .sort(function (a, b) { return a.resetRequestedAt - b.resetRequestedAt; });
+
+  /* keep the home-screen notice in step with what we just loaded */
+  if (pending.length !== PENDING_SIGNUPS || resets.length !== RESET_REQUESTS) {
+    PENDING_SIGNUPS = pending.length; RESET_REQUESTS = resets.length;
+    tabbar();
+    if (S.tab === 'home') render();
+  }
+
+  function stat(n, label, warn) {
+    return '<div style="flex:1;text-align:center;padding:10px 4px">' +
+      '<div class="b" style="font-size:22px' + (warn && n ? ';color:var(--org)' : '') + '">' + n + '</div>' +
+      '<div class="xs muted">' + label + '</div></div>';
+  }
+  var body = '<div class="card" style="display:flex;padding:4px">' +
+    stat(active.length, 'Accounts') + stat(pending.length, 'Waiting approval', true) + stat(resets.length, 'Password requests', true) +
+    '</div>';
+
+  /* ---- forgot-password requests ---- */
+  if (resets.length) {
+    body += '<div class="sec-t" style="color:var(--org)">Password reset requests (' + resets.length + ')</div><div class="card pad0">' +
+      resets.map(function (u) {
+        return '<div class="lrow" style="flex-wrap:wrap;row-gap:8px">' +
+          '<span class="thumb" style="display:grid;place-items:center;font-weight:800;color:var(--org);font-size:13px">' + h(initials(u.name)) + '</span>' +
+          '<span class="grow"><span class="t sm">' + h(u.name) + '</span>' +
+          '<div class="xs muted">Username <b>' + h(u.uid) + '</b> · asked ' + h(fmtDT(u.resetRequestedAt)) + '</div></span>' +
+          '<button class="btn" style="width:auto;min-height:40px;padding:6px 12px;font-size:13px" data-a="setPwFor" data-x="' + h(u.id) + '" data-n="' + h(u.name) + '">🔑 Set new password</button>' +
+          '<button class="iconbtn" style="background:#eef0ee;color:var(--ink);width:38px;height:38px" data-a="dismissReset" data-x="' + h(u.id) + '" data-n="' + h(u.name) + '" title="Dismiss">✕</button>' +
+          '</div>';
+      }).join('') + '</div>';
+  }
+
+  /* ---- sign-ups: approved on the People screen, where role + kitchen are picked ---- */
+  if (pending.length) {
+    body += '<div class="sec-t" style="color:var(--org)">Waiting for approval (' + pending.length + ')</div>' +
+      '<button class="btn sec" data-a="users" style="margin-bottom:12px">Review ' + pending.length + ' sign-up' + (pending.length === 1 ? '' : 's') + ': ' +
+      pending.map(function (u) { return h(u.name); }).join(', ') + ' ›</button>';
+  }
+
+  /* ---- every account ---- */
+  var order = ['superadmin', 'exec', 'aexec', 'admin', 'hok', 'manager', 'staff', 'auditor'];
+  active.sort(function (a, b) { return order.indexOf(a.role) - order.indexOf(b.role) || a.name.localeCompare(b.name); });
+  body += '<div class="sec-t">All accounts (' + active.length + ')</div>' +
+    '<div class="card sm muted">Passwords are stored only as an encrypted one-way hash, so nobody can read them — including you. ' +
+    'To get someone back in, tap <b>🔑 Set new password</b>: you choose a temporary one, see it once, and they pick their own at next sign-in.</div>' +
+    '<div class="card pad0">' +
+    active.map(function (u) {
+      var self = u.id === ME.id;
+      return '<div class="lrow" style="flex-wrap:wrap;row-gap:8px">' +
+        '<span class="thumb" style="display:grid;place-items:center;font-weight:800;color:var(--brand);font-size:13px">' + h(initials(u.name)) + '</span>' +
+        '<span class="grow"><span class="t sm">' + h(u.name) + (self ? ' <span class="xs muted">(you)</span>' : '') + '</span>' +
+        '<div class="xs muted">Username <b>' + h(u.uid) + '</b> · ' + h(ROLES[u.role] ? ROLES[u.role].label : u.role) + ' · ' + (u.loc ? h(lname(u.loc)) : 'All 8 locations') + '</div>' +
+        '<div class="xs muted">' + superStatusLine(u) + '</div>' +
+        '<div class="xs muted">Password: 🔒 encrypted' + (u.mustChange ? ' · <span style="color:var(--org);font-weight:700">temporary, not yet changed</span>' : '') + '</div></span>' +
+        (self
+          ? '<button class="btn sec" style="width:auto;min-height:40px;padding:6px 12px;font-size:13px" data-a="changePw">🔒 Change mine</button>'
+          : '<button class="btn sec" style="width:auto;min-height:40px;padding:6px 12px;font-size:13px" data-a="setPwFor" data-x="' + h(u.id) + '" data-n="' + h(u.name) + '">🔑 Set new password</button>' +
+            '<button class="btn sec" style="width:auto;min-height:40px;padding:6px 12px;font-size:13px;color:var(--red)" data-a="superDel" data-x="' + h(u.id) + '" data-n="' + h(u.name) + '" data-l="' + h(u.loc || '') + '">✕ Remove</button>') +
+        '</div>';
+    }).join('') + '</div>';
+
+  var host = document.querySelector('#modal .sheet-b');
+  if (!host) return;
+  host.innerHTML = body;
+  for (var i = SHEET_STACK.length - 1; i >= 0; i--) {
+    if (SHEET_STACK[i].title === 'User Management panel') { SHEET_STACK[i].body = body; break; }
+  }
+}
+
+/* Sets a new password for one person and shows it once. */
+function setPasswordFor(id, name) {
+  askText('New password for ' + name,
+    'Type a temporary password, or leave it blank for <b>' + h(DEFAULT_PW) + '</b>. ' +
+    'They must choose their own the next time they sign in, and are signed out on every device now.',
+    '', 'leave blank for ' + DEFAULT_PW, 'Set password', function (value) {
+      var pw = value || '';
+      if (pw && pw.length < MIN_PW_LEN) { toast('Password must be at least ' + MIN_PW_LEN + ' characters'); return; }
+      Api.post('/api/admin/users/' + encodeURIComponent(id) + '/reset-password', pw ? { password: pw } : {})
+        .then(function (data) {
+          logAct('user', 'New password set for ' + data.user.name, data.user.loc);
+          closeSheet();
+          openSheet('New password set', '<div class="card center"><div style="font-size:40px">🔑</div>' +
+            '<div class="b" style="font-size:18px;margin-top:6px">' + h(data.user.name) + '</div>' +
+            '<div class="card" style="margin-top:14px;text-align:left"><div class="xs muted b">USERNAME</div><div class="b" style="font-size:20px">' + h(data.user.uid) + '</div>' +
+            '<div class="xs muted b" style="margin-top:10px">TEMPORARY PASSWORD</div><div class="b" style="font-size:20px">' + h(data.password) + '</div></div>' +
+            '<div class="sm muted">Give these to ' + h(data.user.name.split(' ')[0]) + ' now — this is the only time the password is shown. ' +
+            'They will be asked to choose their own when they sign in.</div></div>' +
+            '<button class="btn" data-a="superDash">Back to User Management</button>');
+        }, function (err) { toast(err.message || 'Could not set the password'); });
+    });
+}
+
 var NEWU_ERR = '';
 function addUserSheet() {
   openSheet('Create a new user',
@@ -2270,14 +3216,20 @@ function addUserSheet() {
     '<label class="f"><span>Login ID</span><input class="inp" id="u_uid" placeholder="filled in automatically" autocapitalize="none" autocorrect="off" spellcheck="false">' +
     '<div class="xs muted" style="margin-top:6px">Lower case letters and numbers only. Must be different from everyone else\'s.</div></label>' +
     '<label class="f"><span>Role</span><select class="inp" id="u_role">' +
-    Object.keys(ROLES).map(function (k) { return '<option value="' + k + '"' + (k === 'staff' ? ' selected' : '') + '>' + ROLES[k].label + '</option>'; }).join('') +
+    assignableRoles().map(function (k) { return '<option value="' + k + '"' + (k === 'staff' ? ' selected' : '') + '>' + ROLES[k].label + '</option>'; }).join('') +
     '</select></label>' +
     '<label class="f"><span>Location</span><select class="inp" id="u_loc">' +
     LOCATIONS.map(function (L) { return '<option value="' + L.id + '">' + h(L.name) + '</option>'; }).join('') +
     '</select><div class="xs muted" style="margin-top:6px">Ignored for Execution Head, Assistant Execution Head, Admin, Head of Kitchen and Auditor — they see all 8 locations.</div></label>' +
+    /* Requirement 1: the admin sets the login ID AND the starting password.
+       Left blank it falls back to the shared starting password, which is how
+       the form behaved before. Either way the person is asked to choose their
+       own on first sign-in, and only the bcrypt hash is ever stored. */
+    '<label class="f"><span>Initial password</span><input class="inp" id="u_pw" type="text" placeholder="leave blank for ' + h(DEFAULT_PW) + '" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false">' +
+    '<div class="xs muted" style="margin-top:6px">At least ' + MIN_PW_LEN + ' characters. Shown in plain text so you can read it out — it is stored only as an encrypted hash and cannot be recovered afterwards.</div></label>' +
     (NEWU_ERR ? '<div class="card" style="background:#fdecea;border-color:#f6c9c4;margin:0 0 12px"><b class="sm">' + h(NEWU_ERR) + '</b></div>' : '') +
     '</div>' +
-    '<div class="card sm muted">They will sign in with password <b>' + DEFAULT_PW + '</b> and must choose their own before they can use the app.</div>' +
+    '<div class="card sm muted">They must choose their own password the first time they sign in, whichever one you set here.</div>' +
     '<button class="btn" data-a="saveUser">Create user</button>');
   var n = document.getElementById('u_name');
   n.addEventListener('input', function () {
@@ -2286,27 +3238,64 @@ function addUserSheet() {
   });
   document.getElementById('u_uid').addEventListener('input', function () { this.dataset.touched = '1'; });
 }
+
+/* Creates the account through the admin API (req 1).
+
+   The password is generated and hashed on the server; this code never holds
+   one except for the single plaintext the server returns so the admin can
+   read it out to the new user. Uniqueness of the login ID is decided by the
+   database, not by this device's possibly stale local copy. */
+var NEWU_BUSY = false;
 function saveUser() {
+  if (NEWU_BUSY) return;
+
   var name = document.getElementById('u_name').value.trim();
   var uid = (document.getElementById('u_uid').value || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+  var role = document.getElementById('u_role').value;
+  var loc = document.getElementById('u_loc').value;
+  /* Not trimmed: a space can legitimately be part of a password. */
+  var pw = document.getElementById('u_pw').value || '';
+
   if (!name) { NEWU_ERR = 'Enter a name'; closeSheet(); addUserSheet(); return; }
-  if (!uid) uid = makeUid(name, DB.users);
-  if (userByUid(uid)) { NEWU_ERR = 'The ID "' + uid + '" is already taken — choose another.'; closeSheet(); addUserSheet(); return; }
-  NEWU_ERR = '';
-  var role = document.getElementById('u_role').value, loc = document.getElementById('u_loc').value;
-  var u = {
-    id: 'U-' + Date.now().toString(36).toUpperCase(), name: name, role: role,
-    loc: ROLES[role].all ? null : loc, uid: uid, pw: DEFAULT_PW, mustChange: true, createdAt: Date.now()
-  };
-  DB.users.push(u); save('users', u); logAct('user', 'Created user ' + name + ' (' + uid + ') as ' + ROLES[role].label, u.loc);
-  closeSheet();
-  openSheet('User created', '<div class="card center"><div style="font-size:40px">✅</div>' +
-    '<div class="b" style="font-size:18px;margin-top:6px">' + h(name) + '</div>' +
-    '<div class="sm muted">' + ROLES[role].label + (u.loc ? ' · ' + h(lname(u.loc)) : ' · all 8 locations') + '</div>' +
-    '<div class="card" style="margin-top:14px;text-align:left"><div class="xs muted b">LOGIN ID</div><div class="b" style="font-size:20px">' + h(uid) + '</div>' +
-    '<div class="xs muted b" style="margin-top:10px">PASSWORD</div><div class="b" style="font-size:20px">' + DEFAULT_PW + '</div></div>' +
-    '<div class="sm muted">Give these to ' + h(name.split(' ')[0]) + '. The app will ask them to set their own password on first sign-in.</div></div>' +
-    '<button class="btn" data-a="users">Back to people</button>');
+  /* Caught here so the admin is not left waiting on a round trip for an
+     obvious mistake. The server re-checks it either way. */
+  if (pw && pw.length < MIN_PW_LEN) {
+    NEWU_ERR = 'The initial password must be at least ' + MIN_PW_LEN + ' characters, or leave it blank for ' + DEFAULT_PW;
+    closeSheet(); addUserSheet(); return;
+  }
+
+  NEWU_BUSY = true;
+  var btn = document.querySelector('[data-a="saveUser"]');
+  if (btn) { btn.disabled = true; btn.textContent = 'Creating…'; }
+
+  Api.post('/api/admin/users', {
+    name: name,
+    uid: uid || undefined,        /* omitted -> the server derives it */
+    role: role,
+    loc: ROLES[role].all ? null : loc,
+    password: pw || undefined     /* omitted -> the server uses DEFAULT_PASSWORD */
+  }).then(function (data) {
+    NEWU_BUSY = false;
+    NEWU_ERR = '';
+    var u = data.user;
+    logAct('user', 'Created user ' + u.name + ' (' + u.uid + ') as ' + ROLES[u.role].label, u.loc);
+
+    /* Refresh the roster so the new person is immediately assignable. */
+    Auth.loadRoster().catch(function () { });
+
+    closeSheet();
+    openSheet('User created', '<div class="card center"><div style="font-size:40px">✅</div>' +
+      '<div class="b" style="font-size:18px;margin-top:6px">' + h(u.name) + '</div>' +
+      '<div class="sm muted">' + ROLES[u.role].label + (u.loc ? ' · ' + h(lname(u.loc)) : ' · all 8 locations') + '</div>' +
+      '<div class="card" style="margin-top:14px;text-align:left"><div class="xs muted b">LOGIN ID</div><div class="b" style="font-size:20px">' + h(u.uid) + '</div>' +
+      '<div class="xs muted b" style="margin-top:10px">PASSWORD</div><div class="b" style="font-size:20px">' + h(data.initialPassword) + '</div></div>' +
+      '<div class="sm muted">Give these to ' + h(u.name.split(' ')[0]) + ' now — the password is not shown again. The app will ask them to set their own on first sign-in.</div></div>' +
+      '<button class="btn" data-a="users">Back to people</button>');
+  }, function (err) {
+    NEWU_BUSY = false;
+    NEWU_ERR = err.message || 'Could not create the user';
+    closeSheet(); addUserSheet();
+  });
 }
 function checklistSheet() {
   var body = '<div class="card sm"><b>All-electric kitchens.</b> <span class="muted">No gas appliances anywhere in the group, so the checklist covers induction hobs, electric combi ovens, griddles, fryers and salamanders — plus a weekly electrical-safety wipe-down (dry cloth only around plug points).</span></div>' +
@@ -2320,7 +3309,8 @@ function checklistSheet() {
       body += '<div class="card pad0" style="margin-bottom:8px"><div class="xs b" style="padding:9px 14px 4px;color:var(--mut);text-transform:uppercase;letter-spacing:.6px">' + h(z) + '</div>' +
         zones[z].map(function (t) {
           return '<div class="lrow" style="padding:9px 14px"><span class="dot" style="background:' + (t.freq === 'M' ? 'var(--blue)' : 'var(--grn)') + '"></span>' +
-            '<span class="grow sm">' + h(t.area) + '</span></div>';
+            '<span class="grow sm">' + h(t.area) + '</span>' +
+            (t.day != null ? '<span class="xs b" style="color:var(--brand)">Every ' + DAY_NAMES[t.day] + '</span>' : '') + '</div>';
         }).join('') + '</div>';
     });
   });
@@ -2332,67 +3322,57 @@ function setPhoto(t, which, dataUrl) {
   t[which] = dataUrl; save('tasks', t);
   logAct('photo', 'photo added: ' + t.area, t.loc);
   taskSheet(t.id); toast('Photo saved');
-  if (Cloud.on()) Cloud.uploadPhoto(dataUrl, t.id + '-' + which, function (err, url) {
-    if (!err && url && url !== dataUrl) { t[which] = url; save('tasks', t); }
+  if (Cloud.on()) Cloud.uploadPhoto(dataUrl, t.loc, function (err, url) {
+    if (!err && url && url !== dataUrl && t[which] === dataUrl) { t[which] = url; save('tasks', t); }
   });
 }
 function uploadProductPhoto(p) {
   if (!Cloud.on() || !p.photo || p.photo.indexOf('data:') !== 0) return;
-  Cloud.uploadPhoto(p.photo, p.id, function (err, url) {
-    if (!err && url && url.indexOf('http') === 0) { p.photo = url; save('products', p); }
+  var sent = p.photo;
+  Cloud.uploadPhoto(sent, p.loc, function (err, url) {
+    if (!err && url && url.indexOf('http') === 0 && p.photo === sent) { p.photo = url; save('products', p); }
   });
 }
+/* Photos taken with no connection stay on the device as data: URLs. Once
+   sync is working again, upload them one at a time and swap in the URL.
+   Only this kitchen's records (or all, for head office) — the same ones the
+   server would let this account change. */
+var PHOTO_RETRY_BUSY = false;
+function retryPhotoUploads() {
+  if (PHOTO_RETRY_BUSY || !Cloud.on() || perm().readonly) return;
+  var mine = function (o) { return perm().all || o.loc === ME.loc; };
+  var queue = [];
+  DB.tasks.forEach(function (t) {
+    if (!mine(t)) return;
+    ['before', 'after'].forEach(function (w) { if (t[w] && t[w].indexOf('data:') === 0) queue.push({ o: t, kind: 'tasks', f: w }); });
+  });
+  DB.products.forEach(function (p) { if (mine(p) && p.photo && p.photo.indexOf('data:') === 0) queue.push({ o: p, kind: 'products', f: 'photo' }); });
+  if (!queue.length) return;
+  PHOTO_RETRY_BUSY = true;
+  (function next() {
+    var q = queue.shift();
+    if (!q) { PHOTO_RETRY_BUSY = false; return; }
+    var sent = q.o[q.f];
+    Cloud.uploadPhoto(sent, q.o.loc, function (err, url) {
+      if (err) { PHOTO_RETRY_BUSY = false; return; }      /* try again after the next sync */
+      if (q.o[q.f] === sent) { q.o[q.f] = url; save(q.kind, q.o); }
+      next();
+    });
+  })();
+}
 
-/* ---------------- CLOUD SETUP ---------------- */
-var CLOUD_ERR = '';
+/* ---------------- CLOUD SYNC STATUS ---------------- */
 function cloudSheet() {
   var on = Cloud.on();
   var body = '<div class="card"><div class="row"><span class="dot" style="width:12px;height:12px;background:' +
     (!on ? '#c9cfca' : Cloud.state === 'error' ? 'var(--red)' : 'var(--grn)') + '"></span>' +
     '<div class="grow"><div class="b">' + h(Cloud.label()) + '</div>' +
-    '<div class="xs muted">' + (on ? 'Every device shows the same data' : 'Right now each phone keeps its own separate copy') + '</div></div></div>' +
+    '<div class="xs muted">' + (on ? 'Every device shows the same data' : 'Changes are kept on this device and upload once you are back online') + '</div></div></div>' +
     (Cloud.err ? '<div class="xs" style="color:var(--red);margin-top:8px">' + h(Cloud.err) + '</div>' : '') + '</div>';
-
-  if (!on) {
-    body += '<div class="card sm"><b>Before you connect</b><ol class="muted" style="margin:8px 0 0;padding-left:20px;line-height:1.6">' +
-      '<li>Create a free project at <b>supabase.com</b></li>' +
-      '<li>Open <b>SQL Editor</b>, paste the setup script below, press Run</li>' +
-      '<li>Open <b>Storage</b>, create a <b>public</b> bucket called <b>bk-photos</b></li>' +
-      '<li>Open <b>Settings → API</b> and copy the Project URL and the <b>anon / publishable</b> key</li></ol>' +
-      '<button class="btn sec sm" style="width:100%;margin-top:12px" data-a="copySql">📋 Copy the setup script</button></div>';
-  }
-  body += '<div class="card">' +
-    '<label class="f"><span>Project URL</span><input class="inp" id="c_url" placeholder="https://xxxx.supabase.co" value="' + h(Cloud.cfg.url) + '" autocapitalize="none" spellcheck="false"></label>' +
-    '<label class="f"><span>Anon / publishable key</span><textarea class="inp" id="c_key" rows="3" style="min-height:80px;font-size:13px" placeholder="eyJhbGci…" autocapitalize="none" spellcheck="false">' + h(Cloud.cfg.key) + '</textarea></label>' +
-    (CLOUD_ERR ? '<div class="card" style="background:#fdecea;border-color:#f6c9c4;margin:0 0 12px"><b class="sm">' + h(CLOUD_ERR) + '</b></div>' : '') +
-    '<button class="btn" data-a="cloudConnect">' + (on ? 'Save and re-sync' : 'Connect this app') + '</button></div>';
-
-  if (on) {
-    body += '<div class="btnrow" style="margin-bottom:10px">' +
-      '<button class="btn sec" data-a="cloudSync">↻ Sync now</button>' +
-      '<button class="btn sec" data-a="cloudOff" style="color:var(--red)">Disconnect</button></div>' +
-      '<div class="card sm muted">Photos are uploaded to the <b>bk-photos</b> bucket so phones do not run out of space.</div>';
-  }
-  body += '<div class="card sm muted">Jobs for each new week and month are created automatically. Photos are uploaded to the <b>bk-photos</b> bucket so phones do not run out of space.</div>';
+  if (on) body += '<button class="btn sec" data-a="cloudSync" style="margin-bottom:10px">↻ Sync now</button>';
+  body += '<div class="card sm muted">Sync is automatic whenever you are signed in. Cleaning jobs and expiry records go to the Bookends server, which only shows each kitchen its own records. Photos are stored there too, so phones do not run out of space.</div>';
   openSheet('Cloud sync', body);
 }
-var SETUP_SQL =
-  "create table if not exists bk_users    (id text primary key, loc text, data jsonb not null, updated_at timestamptz not null default now());\n" +
-  "create table if not exists bk_tasks    (id text primary key, loc text, data jsonb not null, updated_at timestamptz not null default now());\n" +
-  "create table if not exists bk_products (id text primary key, loc text, data jsonb not null, updated_at timestamptz not null default now());\n\n" +
-  "create index if not exists bk_tasks_upd    on bk_tasks (updated_at);\n" +
-  "create index if not exists bk_products_upd on bk_products (updated_at);\n" +
-  "create index if not exists bk_users_upd    on bk_users (updated_at);\n\n" +
-  "alter table bk_users    enable row level security;\n" +
-  "alter table bk_tasks    enable row level security;\n" +
-  "alter table bk_products enable row level security;\n\n" +
-  "create policy bk_users_all    on bk_users    for all using (true) with check (true);\n" +
-  "create policy bk_tasks_all    on bk_tasks    for all using (true) with check (true);\n" +
-  "create policy bk_products_all on bk_products for all using (true) with check (true);\n\n" +
-  "-- storage bucket for the before/after photos\n" +
-  "insert into storage.buckets (id, name, public) values ('bk-photos','bk-photos',true)\n" +
-  "  on conflict (id) do update set public = true;\n" +
-  "create policy bk_photos_all on storage.objects for all using (bucket_id = 'bk-photos') with check (bucket_id = 'bk-photos');\n";
 
 /* ---------------- APP SHELL: install, offline, back button, updates ---------------- */
 var deferredInstall = null;
@@ -2408,7 +3388,15 @@ function initPWA() {
       document.body.appendChild(d);
     }
   }
-  window.addEventListener('online', function () { net(); if (Cloud.on()) Cloud.sync(false); });
+  /* Back online: if the app opened offline there is no session yet, so get
+     one from the refresh cookie first, then catch up. */
+  window.addEventListener('online', function () {
+    net();
+    if (Cloud.on()) { Cloud.sync(retryPhotoUploads); return; }
+    if (ME && !Api.token) {
+      Api.refresh().then(function () { Auth.offline = false; startSync(); }, function () { });
+    }
+  });
   window.addEventListener('offline', net);
   net();
 
@@ -2423,7 +3411,7 @@ function initPWA() {
 
   /* refresh data when the app comes back to the foreground */
   document.addEventListener('visibilitychange', function () {
-    if (!document.hidden && Cloud.on()) Cloud.sync(false);
+    if (!document.hidden && Cloud.on()) Cloud.sync(retryPhotoUploads);
   });
 }
 function isStandalone() {
@@ -2481,42 +3469,72 @@ document.addEventListener('click', function (ev) {
     case 'dlgYes': { var cbY = _dlgCb; closeDlg(); if (cbY) cbY(true); break; }
     case 'dlgText': { var v = document.getElementById('dlg_in').value; var cbT = _dlgCb; closeDlg(); if (cbT) cbT(v); break; }
     case 'doLogin': doLogin(); break;
-    case 'savePw': savePw(true); break;
-    case 'savePwSheet': savePw(false); break;
-    case 'changePw': PW_ERR = ''; closeSheet(); changePwSheet(); break;
-    case 'cloudSetup': CLOUD_ERR = ''; closeSheet(); cloudSheet(); break;
-    case 'cloudConnect': {
-      var cu = document.getElementById('c_url').value, ckey = document.getElementById('c_key').value;
-      if (!cu || !ckey) { CLOUD_ERR = 'Paste both the Project URL and the key'; closeSheet(); cloudSheet(); return; }
-      toast('Connecting…');
-      Cloud.connect(cu, ckey, function (err) {
-        CLOUD_ERR = err ? 'Could not connect — ' + err : '';
-        closeSheet(); cloudSheet();
-        toast(err ? 'Connection failed' : 'Connected — all devices will now share this data');
+    case 'showSignup': SIGNUP_ERR = ''; renderSignup(); break;
+    case 'doSignup': doSignup(); break;
+    case 'showForgot': FORGOT_ERR = ''; LOGIN_UID = (document.getElementById('l_uid') || {}).value || LOGIN_UID; renderForgot(); break;
+    case 'doForgot': doForgot(); break;
+    case 'superDash': if (!perm().superadmin) break; closeSheet(); superSheet(); break;
+    case 'setPwFor': setPasswordFor(x, el.getAttribute('data-n') || 'this person'); break;
+    case 'dismissReset': {
+      var dn = el.getAttribute('data-n') || 'this request';
+      askConfirm('Dismiss ' + dn + '’s request?', 'Their password stays as it is. Only do this if they no longer need a reset.', 'Dismiss', function () {
+        Api.post('/api/admin/users/' + encodeURIComponent(x) + '/dismiss-reset', {}).then(function () {
+          toast('Request dismissed'); closeSheet(); superSheet();
+        }, function (err) { toast(err.message || 'Could not dismiss'); });
       });
       break;
     }
-    case 'cloudSync': toast('Syncing…'); Cloud.sync(true, function (err) { toast(err ? 'Sync failed' : 'Up to date'); closeSheet(); cloudSheet(); }); break;
-    case 'cloudOff':
-      askConfirm('Disconnect this device?', 'It will stop sharing data with the other kitchens until you connect it again.', 'Disconnect', function () {
-        Cloud.disconnect(); closeSheet(); cloudSheet();
+    case 'backToLogin': SIGNUP_ERR = ''; LOGIN_ERR = ''; renderLogin(); break;
+    case 'approveUser': {
+      var ar = document.getElementById('ap_role_' + x), al = document.getElementById('ap_loc_' + x);
+      var aRole = ar ? ar.value : 'staff', aLoc = al ? al.value : null;
+      Api.post('/api/admin/users/' + encodeURIComponent(x) + '/approve',
+        { role: aRole, loc: ROLES[aRole].all ? null : aLoc })
+        .then(function (data) {
+          logAct('user', 'Approved ' + data.user.name + ' (' + data.user.uid + ') as ' + ROLES[data.user.role].label, data.user.loc);
+          Auth.loadRoster().catch(function () { });
+          toast(data.user.name + ' approved');
+          closeSheet(); usersSheet();
+        }, function (err) { toast(err.message || 'Could not approve'); });
+      break;
+    }
+    case 'rejectUser': {
+      var rn = el.getAttribute('data-n') || 'this sign-up';
+      askConfirm('Reject ' + rn + '?', 'The account is deleted. They can sign up again if it was a mistake.', 'Reject', function () {
+        Api.del('/api/admin/users/' + encodeURIComponent(x)).then(function () {
+          toast(rn + ' rejected'); closeSheet(); usersSheet();
+        }, function (err) { toast(err.message || 'Could not reject'); });
       }, true);
       break;
-    case 'copySql': copyText(SETUP_SQL, 'Setup script copied'); break;
+    }
+    case 'savePw': savePw(true); break;
+    case 'savePwSheet': savePw(false); break;
+    case 'changePw': PW_ERR = ''; closeSheet(); changePwSheet(); break;
+    case 'cloudSetup': closeSheet(); cloudSheet(); break;
+    case 'cloudSync': toast('Syncing…'); Cloud.sync(function (err) { toast(err ? 'Sync failed' : 'Up to date'); closeSheet(); cloudSheet(); retryPhotoUploads(); }); break;
     case 'copyLink': copyText(appLink(), 'App link copied'); break;
     case 'resetPw': {
       var ru = userById(x); if (!ru) break;
-      askConfirm('Reset password?', ru.name + ' will sign in with <b>' + DEFAULT_PW + '</b> and be asked to choose a new one.', 'Reset', function () {
-        ru.pw = DEFAULT_PW; ru.mustChange = true; save('users', ru);
-        logAct('user', 'Password reset for ' + ru.name, ru.loc);
-        closeSheet(); usersSheet(); toast(ru.name + ' → password ' + DEFAULT_PW);
+      askConfirm('Reset password?', ru.name + ' will sign in with <b>' + DEFAULT_PW + '</b> and be asked to choose a new one. They will be signed out on every device.', 'Reset', function () {
+        Api.post('/api/admin/users/' + encodeURIComponent(ru.id) + '/reset-password', {}).then(function (data) {
+          logAct('user', 'Password reset for ' + ru.name, ru.loc);
+          Auth.loadRoster().catch(function () { });
+          closeSheet(); usersSheet();
+          toast(ru.name + ' → password ' + data.password);
+        }, function (err) {
+          toast(err.message || 'Could not reset the password');
+        });
       });
       break;
     }
     case 'logout':
       askConfirm('Log out?', 'You will need your ID and password to get back in.', 'Log out', function () {
-        localStorage.removeItem(SESS); ME = null; LOGIN_ERR = ''; PW_ERR = '';
-        closeSheet(); render(); toast('Logged out');
+        /* Revokes the session server-side as well, so the refresh cookie
+           left on this phone is dead rather than merely unused. */
+        Auth.logout().then(function () {
+          LOGIN_ERR = ''; PW_ERR = ''; LOGIN_UID = '';
+          closeSheet(); render(); toast('Logged out');
+        });
       }, true);
       break;
     case 'help': closeSheet(); helpSheet(); break;
@@ -2536,7 +3554,32 @@ document.addEventListener('click', function (ev) {
     case 'delUser': {
       var du = userById(x); if (!du) break;
       askConfirm('Remove ' + du.name + '?', 'They will no longer be able to sign in. Work they already recorded is kept.', 'Remove', function () {
-        removeRecord('users', du); logAct('user', 'Removed ' + du.name, du.loc); closeSheet(); usersSheet(); toast(du.name + ' removed');
+        Api.del('/api/admin/users/' + encodeURIComponent(du.id)).then(function () {
+          logAct('user', 'Removed ' + du.name, du.loc);
+          return Auth.loadRoster().catch(function () { });
+        }).then(function () {
+          closeSheet(); usersSheet(); toast(du.name + ' removed');
+        }, function (err) {
+          toast(err.message || 'Could not remove that user');
+        });
+      }, true);
+      break;
+    }
+    /* Remove someone who has left, from the User Management panel: ask first,
+       then confirm it is done. The server still refuses self-removal and the
+       last account that can manage users. */
+    case 'superDel': {
+      var sn = el.getAttribute('data-n') || 'this person', sl = el.getAttribute('data-l') || null;
+      askConfirm('Remove ' + sn + '?', 'Are you sure? ' + h(sn) + ' will no longer be able to sign in. This cannot be undone. Work they already recorded is kept.', 'Yes, remove', function () {
+        Api.del('/api/admin/users/' + encodeURIComponent(x)).then(function () {
+          logAct('user', 'Removed ' + sn, sl);
+          Auth.loadRoster().catch(function () { });
+          showNotice('User removed', h(sn) + ' has been removed and can no longer sign in.', function () {
+            closeSheet(); superSheet();
+          });
+        }, function (err) {
+          showNotice('Could not remove', h(err.message || 'Could not remove that user'));
+        });
       }, true);
       break;
     }
@@ -2552,7 +3595,7 @@ document.addEventListener('click', function (ev) {
     case 'goexp': closeSheet(); S.tab = 'exp'; S.expFilter = x || 'all'; render(); break;
     case 'goclean': closeSheet(); S.tab = 'clean'; S.cleanFilter = x === 'nophoto' ? 'nophoto' : x || 'all'; render(); break;
     case 'locdash': locDash(x); break;
-    case 'openLoc': { var q = x.split(':'); closeSheet(); S.loc = q[0]; S.tab = q[1]; render(); break; }
+    case 'openLoc': { var q = x.split(':'); closeSheet(); S.loc = q[0]; S.tab = q[1]; if (q[2]) S.cleanFilter = q[2]; render(); break; }
     case 'cfilter': S.cleanFilter = x; render(); break;
     case 'crange': {
       if (x === 'week') { S.rangeFrom = ymd(mondayOf(today())); S.rangeTo = ymd(addDays(mondayOf(today()), 6)); }
@@ -2581,16 +3624,16 @@ document.addEventListener('click', function (ev) {
       t4.status = 'completed'; t4.completedAt = Date.now(); t4.completedBy = ME.id; t4.approved = null; t4.reject = '';
       save('tasks', t4); logAct('clean', 'Completed: ' + t4.area, t4.loc); taskSheet(t4.id); toast('Sent for approval'); break;
     }
-    case 'approve': { var t5 = T(x); t5.status = 'completed'; t5.approved = true; t5.approvedBy = ME.id; t5.reject = ''; save('tasks', t5); logAct('approve', 'Approved: ' + t5.area, t5.loc); closeSheet(); render(); toast('Approved ✓'); break; }
+    case 'approve': { var t5 = T(x); t5.status = 'completed'; t5.approved = true; t5.approvedBy = ME.id; t5.approvedAt = Date.now(); t5.reject = ''; save('tasks', t5); logAct('approve', 'Approved: ' + t5.area, t5.loc); closeSheet(); render(); toast('Approved ✓'); break; }
     case 'rejectAsk': {
       askText('Reject this job', 'The person who did it will see this reason.', 'Area re-do required', 'What was wrong?', 'Reject', function (reason) {
         if (reason === null) return;
-        var t6 = T(x); t6.status = 'rejected'; t6.approved = false; t6.approvedBy = ME.id; t6.reject = reason || 'Rejected';
+        var t6 = T(x); t6.status = 'rejected'; t6.approved = false; t6.approvedBy = ME.id; t6.approvedAt = Date.now(); t6.reject = reason || 'Rejected';
         save('tasks', t6); logAct('reject', 'Rejected: ' + t6.area, t6.loc); closeSheet(); render(); toast('Rejected — team notified');
       });
       break;
     }
-    case 'reopen': { var t7 = T(x); t7.status = 'pending'; t7.approved = null; t7.completedAt = null; save('tasks', t7); taskSheet(t7.id); break; }
+    case 'reopen': { var t7 = T(x); if (!perm().approve) break; t7.status = 'pending'; t7.approved = null; t7.approvedBy = null; t7.approvedAt = null; t7.reject = ''; t7.completedAt = null; save('tasks', t7); taskSheet(t7.id); break; }
     case 'addProduct': closeSheet(); productForm(null); break;
     case 'editProduct': closeSheet(); productForm(x); break;
     case 'quickExp': {
@@ -2638,8 +3681,22 @@ document.addEventListener('change', function (ev) {
   else if (el.id === 'rf_to') { S.rangeTo = el.value; if (S.rangeTo < S.rangeFrom) S.rangeFrom = S.rangeTo; render(); }
   else if (el.getAttribute && el.getAttribute('data-a') === 'chrole') {
     var u = userById(el.getAttribute('data-x'));
-    u.role = el.value; if (ROLES[u.role].all) u.loc = null; else if (!u.loc) u.loc = LOCATIONS[0].id;
-    save('users', u); logAct('user', u.name + ' is now ' + ROLES[u.role].label, u.loc); toast(u.name + ' → ' + ROLES[u.role].label);
+    if (!u) return;
+    var newRole = el.value, previousRole = u.role;
+    var newLoc = ROLES[newRole].all ? null : (u.loc || LOCATIONS[0].id);
+
+    /* The server decides: it refuses to strip the last account that can
+       manage users, and refuses self-demotion. */
+    Api.patch('/api/admin/users/' + encodeURIComponent(u.id), { role: newRole, loc: newLoc })
+      .then(function (data) {
+        u.role = data.user.role; u.loc = data.user.loc; u._u = data.user._u;
+        saveLocal();
+        logAct('user', u.name + ' is now ' + ROLES[u.role].label, u.loc);
+        toast(u.name + ' → ' + ROLES[u.role].label);
+      }, function (err) {
+        el.value = previousRole;        /* put the dropdown back */
+        toast(err.message || 'Could not change that role');
+      });
   }
 });
 document.addEventListener('input', function (ev) {
@@ -2669,7 +3726,7 @@ function saveProduct() {
   } else {
     var loc = window._formLoc;
     var np = {
-      id: 'P-' + locById(loc).code + '-' + (100 + DB.products.length), loc: loc, name: name, cat: g('f_cat'),
+      id: newProductId(loc), loc: loc, name: name, cat: g('f_cat'),
       batch: g('f_batch'), qty: +g('f_qty'), unit: g('f_unit'), opened: g('f_opened'), expiry: g('f_expiry'),
       storage: g('f_storage'), photo: window._form.photo || null, labelled: false, labelledAt: null,
       by: ME.id, initials: initials(ME.name), createdAt: Date.now()
@@ -2703,15 +3760,45 @@ function openPendingLink() {
   else toast('That label is not in the system yet');
 }
 
-/* ---------------- boot ---------------- */
+/* ---------------- boot ----------------
+
+   Start-up is now asynchronous, because establishing the session means
+   asking the server whether the refresh cookie on this device is still
+   good. A brief "Signing you in…" card covers that round trip instead of
+   flashing the login screen at someone who is already signed in. */
+
+function renderBooting() {
+  $('#tabbar').innerHTML = '';
+  $('#app').innerHTML =
+    '<div class="hdr" style="padding-bottom:26px"><div class="hdr-row"><h1 style="font-size:20px">BOOKENDS<small>Kitchen Operations &amp; Compliance</small></h1></div></div>' +
+    '<div class="wrap"><div class="card center"><div class="sm muted">Signing you in…</div></div></div>';
+}
+
+/* Starts sharing data with the other devices. Only once signed in: the
+   server needs to know who is asking before it hands over any records. */
+function startSync() {
+  Cloud.start();
+  setTimeout(retryPhotoUploads, 3000);
+}
+
 load();
-ensureJobs();
 handleDeepLink();
-Cloud.init();
+Cloud.load();
 initPWA();
 S.week = weekId(today());
 S.rangeFrom = ymd(mondayOf(today()));
 S.rangeTo = ymd(addDays(mondayOf(today()), 6));
-S.loc = ME ? (ME.loc || 'ALL') : 'ALL';
-render();
+
+renderBooting();
+
+Auth.boot(function () {
+  S.loc = ME ? (ME.loc || 'ALL') : 'ALL';
+  /* ensureJobs() assigns each new job to a location's manager, so it needs
+     the roster. It now runs after the roster has arrived rather than before. */
+  if (ME) ensureJobs();
+  render();
+  refreshPendingSignups();
+  if (ME && !Auth.offline && !ME.mustChange) startSync();
+  if (Auth.offline) toast('No connection — showing the work saved on this device');
+});
 </script></body></html>

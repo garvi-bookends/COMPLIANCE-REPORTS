@@ -1,0 +1,9 @@
+node_modules/
+.env
+.env.local
+*.log
+npm-debug.log*
+
+# Build output: a copy of index.html made by `npm run build` for Vercel
+public/index.html
+.vercel

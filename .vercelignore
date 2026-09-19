@@ -1,0 +1,8 @@
+# Never uploaded to Vercel. Secrets come from the project's Environment
+# Variables, not from files.
+.env
+.env.*
+!.env.example
+*.log
+node_modules
+.vscode
