@@ -1075,6 +1075,16 @@ function builtInFor(tk) {
 /* A job that has been stopped: no longer generated, and hidden from the live
    screens. The cleaning already recorded against it is untouched. */
 function jobStopped(tk) { var o = ckItem(tk); return !!(o && o.deleted); }
+/* A service is scheduled only once it has been added — or switched on — in Job
+   Management. The built-in checklist ships switched off, so the Cleaning
+   section shows the jobs this group chose to run rather than the ones that
+   came with the app. Work already recorded against a job that is off keeps its
+   photos and approvals and stays in the reports; it is only the live screens
+   that leave it out. */
+function serviceLive(tk) {
+  var o = ckItem(tk);
+  return !!(o && o.enabled && !o.deleted);
+}
 
 /* The job as it stands: built-in or added, with any rename applied. */
 function jobFor(tk) {
@@ -1084,7 +1094,7 @@ function jobFor(tk) {
     return { tk: tk, area: o.name, zone: o.zone, freq: o.freq, day: o.day == null ? null : o.day,
              loc: o.loc || null, jobType: o.jobType || 'cleaning',
              assignedTo: o.assignedTo || null, atTime: o.atTime || null, endDate: o.endDate || null,
-             custom: true, stopped: !!o.deleted };
+             custom: true, enabled: o.enabled === true, stopped: !!o.deleted };
   }
   if (!b) return null;
   /* A built-in service falls back to the list in the app for anything the
@@ -1101,7 +1111,7 @@ function jobFor(tk) {
            assignedTo: (o && o.assignedTo) || null,
            atTime: (o && o.atTime) || null,
            endDate: (o && o.endDate) || null,
-           custom: false, stopped: !!(o && o.deleted) };
+           custom: false, enabled: !!(o && o.enabled), stopped: !!(o && o.deleted) };
 }
 
 /* The name to SHOW for a job. Task records keep their original `area`
@@ -1122,13 +1132,13 @@ function checklistJobs(freq, loc) {
   var out = [];
   CLEAN_TEMPLATE.forEach(function (b) {
     if (freq && b.freq !== freq) return;
-    if (jobStopped(b.tk)) return;
+    if (!serviceLive(b.tk)) return;
     out.push(jobFor(b.tk));
   });
   var ck = (DB && DB.checklist) || {};
   Object.keys(ck).forEach(function (tk) {
     var o = ck[tk];
-    if (!o || !o.custom || o.deleted) return;
+    if (!o || !o.custom || !serviceLive(tk)) return;
     if (freq && o.freq !== freq) return;
     if (loc && o.loc && o.loc !== loc) return;
     out.push(jobFor(tk));
@@ -1389,7 +1399,7 @@ function tasksFor(loc, wk, freq, type) {
   return DB.tasks.filter(function (t) {
     if (t.loc !== loc) return false;
     if (taskJobType(t) !== want) return false;
-    if (jobStopped(tkeyOf(t))) return false;
+    if (!serviceLive(tkeyOf(t))) return false;
     if (freq && t.freq !== freq) return false;
     if (!wk) return true;
     return t.freq === 'M' ? t.period === mid : t.period === wk;
@@ -1422,7 +1432,7 @@ function tasksInRange(loc, from, to, freq, type) {
   return DB.tasks.filter(function (t) {
     if (t.loc !== loc) return false;
     if (taskJobType(t) !== want) return false;
-    if (jobStopped(tkeyOf(t))) return false;
+    if (!serviceLive(tkeyOf(t))) return false;
     if (freq && t.freq !== freq) return false;
     return t.due >= from && t.due <= to;
   });
@@ -1923,7 +1933,7 @@ function editChoices(field) {
   if (field === 'loc') {
     return [['', 'All ' + LOCATIONS.length + ' kitchens']].concat(LOCATIONS.map(function (L) { return [L.id, L.code + ' ' + L.name]; }));
   }
-  if (field === 'status') return [['active', 'Active'], ['stopped', 'Stopped — not scheduled']];
+  if (field === 'status') return [['active', 'Active — scheduled'], ['off', 'Off — not scheduled']];
   if (field === 'assignedTo') {
     /* Anyone who does the work. The Auditor is read-only, so never offered. */
     return [['', 'Anyone on shift']].concat((DB.users || [])
@@ -1941,7 +1951,7 @@ function currentValue(job, field) {
   if (field === 'freq') return job.freq || 'W';
   if (field === 'day') return job.day == null ? '' : String(job.day);
   if (field === 'loc') return job.loc || '';
-  if (field === 'status') return job.stopped ? 'stopped' : 'active';
+  if (field === 'status') return (job.enabled && !job.stopped) ? 'active' : 'off';
   if (field === 'assignedTo') return job.assignedTo || '';
   return '';
 }
@@ -2008,8 +2018,11 @@ function saveCleanField(tk, field, value, current) {
     body[field] = text; label = text;
   } else if (field === 'status') {
     if (value === current) { render(); return; }
-    body.deleted = value === 'stopped';
-    label = value === 'stopped' ? 'stopped' : 'active';
+    /* Switching a service on also un-deletes it, so one control does what it
+       says rather than leaving a job on-but-deleted. */
+    body.enabled = value === 'active';
+    if (value === 'active') body.deleted = false;
+    label = value === 'active' ? 'active' : 'off';
   } else {
     if (value === current) { render(); return; }
     body[field] = field === 'day' ? (value === '' ? null : Number(value)) : (value === '' ? null : value);
@@ -4460,9 +4473,12 @@ function renderTypeServices() {
         '<td class="sm">' + cellEdit(j.tk, 'loc', j.loc ? lname(j.loc) : 'All ' + LOCATIONS.length) + '</td>' +
         '<td class="sm">' + cellEdit(j.tk, 'assignedTo', j.assignedTo ? uname(j.assignedTo) : 'Anyone on shift', j.assignedTo ? '' : 'muted') +
           (j.assignedTo && userById(j.assignedTo) ? '<div class="xs muted">' + h(ROLES[userById(j.assignedTo).role] ? ROLES[userById(j.assignedTo).role].label : '') + '</div>' : '') + '</td>' +
-        '<td>' + (canManageClean()
-          ? cellEdit(j.tk, 'status', j.stopped ? 'STOPPED' : 'ACTIVE', j.stopped ? 'pill p-red' : 'pill p-grn')
-          : pill(j.stopped ? 'STOPPED' : 'ACTIVE', j.stopped ? 'p-red' : 'p-grn')) + '</td>' +
+        '<td>' + (function () {
+          var live = j.enabled && !j.stopped;
+          var lbl = j.stopped ? 'DELETED' : live ? 'ACTIVE' : 'OFF';
+          var cls = j.stopped ? 'p-red' : live ? 'p-grn' : 'p-org';
+          return canManageClean() ? cellEdit(j.tk, 'status', lbl, 'pill ' + cls) : pill(lbl, cls);
+        })() + '</td>' +
         '<td class="nowrap">' + mgBtn('deleteClean', j.tk, '✕', 'Delete service', 'background:#f6e7e5;color:var(--red)') + '</td>' +
         '</tr>';
     }), 'No services under this job type yet');

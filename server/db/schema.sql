@@ -269,6 +269,14 @@ create index if not exists bk_checklist_type on bk_checklist (job_type);
 -- A service may name the person responsible for it, the time of day it is due
 -- and the date it stops. All optional: the cleaning checklist uses none of
 -- them, and every job recorded before they existed is unaffected.
+-- A service is scheduled only once it has been put there on purpose. Jobs
+-- added in Job Management are switched on as they are created; the built-in
+-- checklist starts off, so the Cleaning section shows what this group chose
+-- to run rather than what shipped with the app. Default false so that a row
+-- written for some other reason — a rename, say — does not switch a built-in
+-- job on by accident.
+alter table bk_checklist add column if not exists enabled boolean not null default false;
+
 alter table bk_checklist add column if not exists assigned_to text;
 alter table bk_checklist add column if not exists at_time    text;
 alter table bk_checklist add column if not exists end_date   text;

@@ -83,6 +83,7 @@ function rowToItem(x) {
     day: x.day,
     loc: x.loc,
     custom: x.custom,
+    enabled: x.enabled === true,
     deleted: x.deleted,
     prevName: x.prev_name,
     by: x.edited_by || x.created_by,
@@ -205,8 +206,8 @@ router.post('/items', superadminOnly, asyncHandler(function (req, res) {
       }
       var tkey = freq + next;
       return client.query(
-        'insert into bk_checklist (tkey, name, zone, freq, day, loc, job_type, assigned_to, at_time, end_date, custom, created_by, created_at, updated_at) ' +
-        'values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, true, $11, now(), now())',
+        'insert into bk_checklist (tkey, name, zone, freq, day, loc, job_type, assigned_to, at_time, end_date, custom, enabled, created_by, created_at, updated_at) ' +
+        'values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, true, true, $11, now(), now())',
         [tkey, name, zone, freq, day, loc, jobType, assignedTo, atTime || null, endDate || null, req.auth.id]
       ).then(function () {
         return audit(client, 'add', tkey, null, name, req.auth);
@@ -294,6 +295,7 @@ router.patch('/items/:tkey', superadminOnly, asyncHandler(function (req, res) {
     else patch.end_date = endDate || null;
   }
   if (!err && has('deleted')) patch.deleted = !!body.deleted;
+  if (!err && has('enabled')) patch.enabled = !!body.enabled;
 
   if (err) return badRequest(res, err);
   if (!Object.keys(patch).length) return badRequest(res, 'Nothing to change');
@@ -313,7 +315,7 @@ router.patch('/items/:tkey', superadminOnly, asyncHandler(function (req, res) {
       }
 
       var cols = ['tkey', 'name', 'zone', 'freq', 'day', 'loc', 'job_type',
-                  'assigned_to', 'at_time', 'end_date', 'custom', 'deleted',
+                  'assigned_to', 'at_time', 'end_date', 'custom', 'deleted', 'enabled',
                   'prev_name', 'edited_by', 'edited_at', 'updated_at'];
       var pick = function (col, fallback) {
         return Object.prototype.hasOwnProperty.call(patch, col) ? patch[col]
@@ -332,15 +334,16 @@ router.patch('/items/:tkey', superadminOnly, asyncHandler(function (req, res) {
         pick('end_date', null),
         row ? row.custom : false,
         pick('deleted', false),
+        pick('enabled', false),
         renaming ? prev : (row ? row.prev_name : null),
         req.auth.id
       ];
 
       return client.query(
         'insert into bk_checklist (' + cols.join(', ') + ') ' +
-        'values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14, now(), now()) ' +
+        'values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15, now(), now()) ' +
         'on conflict (tkey) do update set ' +
-        cols.slice(1, 14).map(function (c, i) { return c + ' = $' + (i + 2); }).join(', ') +
+        cols.slice(1, 15).map(function (c, i) { return c + ' = $' + (i + 2); }).join(', ') +
         ', edited_at = now(), updated_at = now()',
         vals
       ).then(function () {
