@@ -21,7 +21,7 @@ var crypto = require('crypto');
 
 var PROFILE_COLUMNS =
   'id, uid, name, role, loc, first_login, must_change_password, ' +
-  'last_login_at, login_count, disabled, pending, reset_requested_at, created_at, created_by, updated_at';
+  'last_login_at, login_count, disabled, pending, reset_requested_at, created_at, created_by, updated_at, email';
 
 var SUPERADMIN = 'superadmin';
 
@@ -54,6 +54,7 @@ function toAppUser(row) {
     name: row.name,
     role: row.role,
     loc: row.loc,
+    email: row.email || null,
     mustChange: row.must_change_password,
     firstLogin: row.first_login,
     lastLogin: row.last_login_at ? new Date(row.last_login_at).getTime() : null,
@@ -217,13 +218,17 @@ function createUser(fields) {
 
   return db.transaction(function (client) {
     return client.query(
-      'insert into app_users (id, uid, name, role, loc, first_login, must_change_password, created_by, pending) ' +
-      'values ($1, $2, $3, $4, $5, true, $6, $7, $8) ' +
+      'insert into app_users (id, uid, name, role, loc, first_login, must_change_password, created_by, pending, disabled, email) ' +
+      'values ($1, $2, $3, $4, $5, true, $6, $7, $8, $9, $10) ' +
       'returning ' + PROFILE_COLUMNS,
       [id, uid, String(fields.name).trim(), role, loc,
         fields.mustChange === undefined ? true : !!fields.mustChange,
         fields.createdBy || null,
-        !!fields.pending]
+        !!fields.pending,
+        /* An account may be created already switched off — someone starting
+           next week, set up in advance. */
+        !!fields.disabled,
+        fields.email || null]
     ).then(function (r) {
       return client.query(
         'insert into app_user_credentials (user_id, password_hash) values ($1, $2)',
@@ -296,6 +301,8 @@ function updateProfile(userId, patch) {
   }
 
   if (patch.disabled !== undefined) { sets.push('disabled = $' + i++); params.push(!!patch.disabled); }
+  /* An empty address clears it, rather than storing a blank string. */
+  if (patch.email !== undefined) { sets.push('email = $' + i++); params.push(patch.email || null); }
 
   if (!sets.length) return findById(userId);
 

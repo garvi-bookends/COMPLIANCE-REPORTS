@@ -208,6 +208,12 @@ function jobChangeRefused(prev, next) {
     return 'only an approver can change the rejection reason';
   }
   if (next.status === 'pending' && old.status !== 'pending') return 'only an approver can re-open a job';
+  /* The cleaning name is never edited on the task record — a rename is stored
+     once, group-wide, through /api/checklist/names, which checks the role
+     itself. So `area` changing here is always wrong, and refusing it stops a
+     phone rewriting the job it was handed. */
+  if (!same(old.area, next.area)) return 'a cleaning job is renamed through the checklist, not on the job';
+  if (!same(old.zone, next.zone)) return 'only an approver can move a job to another area';
   return null;
 }
 

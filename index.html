@@ -112,6 +112,36 @@ button,input,select,textarea{font:inherit;color:inherit}
 .lrow .t{font-weight:650;font-size:15px;line-height:1.25}
 .thumb{width:46px;height:46px;border-radius:11px;object-fit:cover;background:#eceee9;flex:none}
 .chev{color:#c2c8cc;font-size:20px;flex:none}
+/* ---------- management ----------
+   The Management menu. In the sidebar (wide screens) the sub-items nest under
+   it as indented nav rows; on a phone the bottom bar cannot nest, so they are
+   drawn as a panel above it instead. Exactly one of the two ever shows. */
+.subtab{display:none}
+.mgmenu{background:#fff;border-top:1px solid var(--line);box-shadow:0 -8px 24px rgba(0,0,0,.10)}
+.mgmenu-i{display:flex;align-items:center;gap:12px;width:100%;text-align:left;border:0;border-bottom:1px solid var(--line);background:#fff;padding:12px 14px;cursor:pointer}
+.mgmenu-i:last-child{border-bottom:0}
+.mgmenu-i:active{background:#f7f8f6}
+.mgmenu-sub{padding-left:26px;background:#fafbfa}
+.mgmenu-ic{flex:none;width:36px;height:36px;border-radius:11px;background:#eef2ee;display:grid;place-items:center;font-size:18px}
+.mgmenu-sub .mgmenu-ic{width:32px;height:32px;font-size:16px;background:#fff}
+.linkish{background:none;border:0;padding:0;color:var(--brand);cursor:pointer;text-align:left;font:inherit}
+.linkish:active{opacity:.6}
+/* The account table is wider than a phone, so it scrolls sideways on its own
+   rather than stretching the page. */
+.tablewrap{overflow-x:auto;-webkit-overflow-scrolling:touch;border:1px solid var(--line);border-radius:14px;background:#fff}
+.utable{border-collapse:collapse;width:100%;font-size:13.5px}
+.utable th{text-align:left;font-size:11px;font-weight:800;letter-spacing:.5px;text-transform:uppercase;color:var(--mut);padding:10px 12px;border-bottom:1px solid var(--line);white-space:nowrap;background:#fafbfa}
+.utable td{padding:10px 12px;border-bottom:1px solid var(--line);vertical-align:middle}
+.utable tr:last-child td{border-bottom:0}
+.utable .mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12.5px}
+.utable .nowrap{white-space:nowrap}
+.iconbtn.sq{background:#eef0ee;color:var(--ink);width:32px;height:32px;border-radius:9px;font-size:14px;display:inline-grid;margin-right:4px;vertical-align:middle}
+.editn{flex:none;background:transparent;border:0;color:var(--mut);width:36px;height:36px;border-radius:9px;display:grid;place-items:center;font-size:15px;cursor:pointer}
+.editn:active{background:#eef1ee}
+/* A cleaning name the Super Admin can rename by double-clicking it. */
+.cname{cursor:text;border-radius:4px;text-decoration:underline;text-decoration-style:dotted;text-decoration-color:#c9cfca;text-underline-offset:3px}
+.cname:hover{background:#f2f5f1}
+.cname-in{font-weight:650;font-size:15px;padding:6px 8px;margin:0}
 
 /* ---------- meters ---------- */
 .bar{height:9px;border-radius:6px;background:#e9ebe7;overflow:hidden}
@@ -214,6 +244,10 @@ table.tbl tr:last-child td{border-bottom:0}
   .ovl{align-items:center}
   .btn:hover{filter:brightness(1.06)}
   .lrow:hover{background:#f7f8f6}
+  /* the nav is a sidebar here, so Management nests inside it */
+  .subtab{display:flex;padding-left:30px;font-size:13.5px;opacity:.92}
+  .subtab .subdot{font-size:15px;width:21px;text-align:center}
+  .mgmenu{display:none}
 }
 @media (min-width:1280px){ .wrap{padding:24px 40px} }
 .netbar{position:fixed;left:0;right:0;top:0;z-index:300;background:#8a5a00;color:#fff;font-size:12.5px;font-weight:700;
@@ -1014,15 +1048,103 @@ var CLEAN_TEMPLATE = [
   { area: 'Housekeeping area cleaning',                        zone: 'Housekeeping',      freq: 'W', day: 1 }
 ];
 var DAY_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
-/* Which saved tasks are fixed-day jobs. Looked up from the template by
-   frequency + name, so tasks recorded before `day` existed still match. */
-var FIXED_DAY = {};
-CLEAN_TEMPLATE.forEach(function (t) { if (t.day != null) FIXED_DAY[t.freq + '|' + t.area] = t.day; });
-function fixedDay(t) { return FIXED_DAY[t.freq + '|' + t.area]; }
+/* ---------- a job's stable key ----------
+   Where the job sits in the checklist: 'W12' is the 13th weekly job, 'M3' the
+   4th monthly one. ensureJobs() builds task ids from that very slot
+   ('T-AKA-2026-W38-W12'), so it can be read back off any task ever recorded.
+   The slot is what a job really IS; its name is only what it is called this
+   week. That is what lets a rename reach jobs already on file, and what makes
+   deleting a job safe — the slot stays reserved for ever, because reusing it
+   would silently re-label years of recorded work. */
+var BUILTIN_WEEKLY = CLEAN_TEMPLATE.filter(function (t) { return t.freq === 'W'; });
+var BUILTIN_MONTHLY = CLEAN_TEMPLATE.filter(function (t) { return t.freq === 'M'; });
+BUILTIN_WEEKLY.forEach(function (t, i) { t.tk = 'W' + i; });
+BUILTIN_MONTHLY.forEach(function (t, i) { t.tk = 'M' + i; });
+function tkeyOf(t) { return t.tk || String(t.id || '').split('-').pop(); }
+function slotOf(tk) { return parseInt(String(tk).slice(1), 10) || 0; }
+
+/* ---------- the checklist, as it stands today ----------
+   The built-in list above, plus the Super Admin's changes to it: renames,
+   jobs added, jobs stopped. DB.checklist holds only the changes; everything
+   else comes from the built-in list. */
+function ckItem(tk) { return DB && DB.checklist ? DB.checklist[tk] : null; }
+function builtInFor(tk) {
+  for (var i = 0; i < CLEAN_TEMPLATE.length; i++) if (CLEAN_TEMPLATE[i].tk === tk) return CLEAN_TEMPLATE[i];
+  return null;
+}
+/* A job that has been stopped: no longer generated, and hidden from the live
+   screens. The cleaning already recorded against it is untouched. */
+function jobStopped(tk) { var o = ckItem(tk); return !!(o && o.deleted); }
+
+/* The job as it stands: built-in or added, with any rename applied. */
+function jobFor(tk) {
+  var o = ckItem(tk), b = builtInFor(tk);
+  if (!o && !b) return null;
+  if (o && o.custom) {
+    return { tk: tk, area: o.name, zone: o.zone, freq: o.freq, day: o.day == null ? null : o.day,
+             loc: o.loc || null, jobType: o.jobType || 'cleaning',
+             assignedTo: o.assignedTo || null, atTime: o.atTime || null, endDate: o.endDate || null,
+             custom: true, stopped: !!o.deleted };
+  }
+  if (!b) return null;
+  /* A built-in service falls back to the list in the app for anything the
+     Super Admin has not changed. Frequency and weekday travel together: once
+     the frequency is overridden the weekday comes from the override too, so a
+     pinned day can be cleared back to "spread across the week". */
+  return { tk: tk,
+           area: (o && o.name) || b.area,
+           zone: (o && o.zone) || b.zone,
+           freq: (o && o.freq) || b.freq,
+           day: (o && o.freq) ? (o.day == null ? null : o.day) : (b.day == null ? null : b.day),
+           loc: (o && o.loc) || null,
+           jobType: (o && o.jobType) || 'cleaning',
+           assignedTo: (o && o.assignedTo) || null,
+           atTime: (o && o.atTime) || null,
+           endDate: (o && o.endDate) || null,
+           custom: false, stopped: !!(o && o.deleted) };
+}
+
+/* The name to SHOW for a job. Task records keep their original `area`
+   untouched, so nothing about a recorded job — its photo, status or
+   approval — is disturbed by renaming it. */
+function cleanName(t) {
+  var tk = tkeyOf(t), o = ckItem(tk);
+  if (o && o.name) return o.name;
+  if (t.area) return t.area;
+  var b = builtInFor(tk);
+  return b ? b.area : '';
+}
+
+/* Every job that should be generated and shown, for one kitchen. Stopped jobs
+   are left out. An added job may belong to a single kitchen; built-in jobs
+   always apply to all of them. */
+function checklistJobs(freq, loc) {
+  var out = [];
+  CLEAN_TEMPLATE.forEach(function (b) {
+    if (freq && b.freq !== freq) return;
+    if (jobStopped(b.tk)) return;
+    out.push(jobFor(b.tk));
+  });
+  var ck = (DB && DB.checklist) || {};
+  Object.keys(ck).forEach(function (tk) {
+    var o = ck[tk];
+    if (!o || !o.custom || o.deleted) return;
+    if (freq && o.freq !== freq) return;
+    if (loc && o.loc && o.loc !== loc) return;
+    out.push(jobFor(tk));
+  });
+  return out.filter(Boolean);
+}
+function dailyJobs(loc) { return checklistJobs('D', loc); }
+function weeklyJobs(loc) { return checklistJobs('W', loc); }
+function monthlyJobs(loc) { return checklistJobs('M', loc); }
+/* The jobs pinned to a weekday, shown together in their own section. */
+function pinnedJobs(loc) { return checklistJobs(null, loc).filter(function (j) { return j.day != null; }); }
+
+/* A job's fixed weekday, read from the checklist rather than from the name,
+   so a renamed job keeps its weekday and its 'EVERY MONDAY' pill. */
+function fixedDay(t) { var j = jobFor(tkeyOf(t)); return j && j.day != null ? j.day : undefined; }
 function isTuesdayJob(t) { return fixedDay(t) === 1; }
-var TUESDAY_JOBS = CLEAN_TEMPLATE.filter(function (t) { return t.day === 1; });
-var WEEKLY_JOBS = CLEAN_TEMPLATE.filter(function (t) { return t.freq === 'W'; });
-var MONTHLY_JOBS = CLEAN_TEMPLATE.filter(function (t) { return t.freq === 'M'; });
 
 var CATEGORIES = ['Dairy', 'Meat & Poultry', 'Seafood', 'Produce', 'Sauces & Prep', 'Dry Goods', 'Frozen', 'Bakery', 'Beverage'];
 var STORAGE = ['Chiller 1 (0–4°C)', 'Chiller 2 (0–4°C)', 'Walk-in Chiller', 'Freezer (−18°C)', 'Dry Store', 'Ambient Prep', 'Bar Fridge'];
@@ -1091,10 +1213,12 @@ function initials(name) {
   return (w[0][0] + w[w.length - 1][0]).toUpperCase();
 }
 
-function newTaskRec(L, tp, period, due, i, who) {
+function newTaskRec(L, tp, period, due, who) {
   return {
-    id: 'T-' + L.code + '-' + period + '-' + tp.freq + i, loc: L.id, period: period, freq: tp.freq,
-    area: tp.area, zone: tp.zone, assigned: who ? who.id : null, due: due, status: 'pending',
+    /* The id ends in the job's SLOT. For every built-in job that is the same
+       string it has always been, so ids already recorded still match. */
+    id: 'T-' + L.code + '-' + period + '-' + tp.tk, loc: L.id, period: period, freq: tp.freq,
+    area: tp.area, zone: tp.zone, tk: tp.tk, assigned: who ? who.id : null, due: due, status: 'pending',
     before: null, after: null, approved: null, approvedBy: null, approvedAt: null, reject: '',
     completedAt: null, completedBy: null, note: '',
     /* A generated job is 'the oldest possible edit': if another phone or the
@@ -1112,13 +1236,32 @@ function ensureJobs() {
   LOCATIONS.forEach(function (L) {
     var who = DB.users.filter(function (u) { return u.loc === L.id && u.role === 'manager'; })[0] ||
               DB.users.filter(function (u) { return u.loc === L.id; })[0] || null;
-    WEEKLY_JOBS.forEach(function (tp, i) {
-      var r = newTaskRec(L, tp, wid, ymd(addDays(mon, tp.day != null ? tp.day : 1 + (i % 6))), i, who);
-      if (!have[r.id]) { DB.tasks.push(r); added++; if (typeof Cloud !== 'undefined') Cloud.queue('tasks', r); }
+    /* Due dates are spread from the job's SLOT, not its position in the list,
+       so adding or stopping a job never shifts when the others fall due. */
+    /* A job stops being scheduled after its end date, and may name the person
+       responsible and the time of day it is due. The built-in cleaning
+       checklist sets none of these, so it is generated exactly as before. */
+    function place(tp, period, due, idSuffix) {
+      if (tp.endDate && due > tp.endDate) return;
+      var r = newTaskRec(L, tp, period, due, who);
+      if (idSuffix) r.id += idSuffix;
+      if (tp.assignedTo) r.assigned = tp.assignedTo;
+      if (tp.atTime) r.time = tp.atTime;
+      if (tp.jobType && tp.jobType !== 'cleaning') r.jobType = tp.jobType;
+      if (!have[r.id]) { have[r.id] = 1; DB.tasks.push(r); added++; if (typeof Cloud !== 'undefined') Cloud.queue('tasks', r); }
+    }
+    weeklyJobs(L.id).forEach(function (tp) {
+      var i = slotOf(tp.tk);
+      place(tp, wid, ymd(addDays(mon, tp.day != null ? tp.day : 1 + (i % 6))));
     });
-    MONTHLY_JOBS.forEach(function (tp, i) {
-      var r = newTaskRec(L, tp, mid, ymd(new Date(t.getFullYear(), t.getMonth(), Math.min(28, 6 + i * 2))), i, who);
-      if (!have[r.id]) { DB.tasks.push(r); added++; if (typeof Cloud !== 'undefined') Cloud.queue('tasks', r); }
+    monthlyJobs(L.id).forEach(function (tp) {
+      var i = slotOf(tp.tk);
+      place(tp, mid, ymd(new Date(t.getFullYear(), t.getMonth(), Math.min(28, 6 + i * 2))));
+    });
+    /* A daily job falls due every day of the week. The id carries the day, so
+       the seven are distinct; the slot still lives on the record itself. */
+    dailyJobs(L.id).forEach(function (tp) {
+      for (var dd = 0; dd < 7; dd++) place(tp, wid, ymd(addDays(mon, dd)), '-d' + dd);
     });
   });
   if (added) saveLocal();
@@ -1130,7 +1273,7 @@ function freshData() {
      Accounts live in the backend database. The roster arrives from
      GET /api/users/roster after a successful sign-in, and the starting
      roster is created once on the server with `npm run seed`. */
-  return { users: [], tasks: [], products: [], log: [], read: {}, createdAt: Date.now() };
+  return { users: [], tasks: [], products: [], log: [], read: {}, checklist: {}, jobTypes: [], createdAt: Date.now() };
 }
 
 /* ---------------- store ---------------- */
@@ -1139,6 +1282,12 @@ function load() {
   try { DB = JSON.parse(localStorage.getItem(KEY)); } catch (e) { DB = null; }
   if (!DB || !DB.users) { DB = freshData(); saveLocal(); }
   if (!DB.read) DB.read = {};
+  /* The Super Admin's changes to the cleaning checklist — renames, added
+     jobs, stopped jobs — kept on the device so the checklist people know is
+     still right when the app opens offline. Refreshed on each sync. */
+  if (!DB.checklist) DB.checklist = {};
+  if (!DB.jobTypes) DB.jobTypes = [];
+  delete DB.cleanNames; delete DB.cleanNameMeta;   /* replaced by DB.checklist */
 
   /* Upgrading from the version that kept plaintext passwords on the device:
      strip every `pw` field out of the local copy on first load, so an old
@@ -1213,15 +1362,23 @@ function logAct(type, text, loc) { DB.log.unshift({ t: Date.now(), type: type, t
 /* ---------------- compliance maths ---------------- */
 /* Everything due at a location "right now": this week's weekly jobs + this month's heavy jobs.
    Pass freq 'W' or 'M' to get just one of the two. */
+/* The live view of a kitchen's work. A stopped job is left out: it is gone
+   from the cleaning list, the dashboards and the alerts. What was already
+   recorded against it is still there — see tasksForAudit. */
 function tasksFor(loc, wk, freq) {
   var mid = wk ? monthOfWeek(wk) : null;
   return DB.tasks.filter(function (t) {
     if (t.loc !== loc) return false;
+    if (jobStopped(tkeyOf(t))) return false;
     if (freq && t.freq !== freq) return false;
     if (!wk) return true;
     return t.freq === 'M' ? t.period === mid : t.period === wk;
   });
 }
+/* A job counts as missing its evidence only once it has been sent for
+   approval. A rejected job has its photo cleared on purpose so the team must
+   retake it, and it is already flagged as rejected — do not flag it twice. */
+function missingPhoto(t) { return t.status === 'completed' && !t.before && !t.after; }
 function cleaningStats(loc, wk, freq) {
   var ts = tasksFor(loc, wk, freq), td = ymd(today());
   var done = 0, appr = 0, rej = 0, pend = 0, overdue = 0, noPhoto = 0;
@@ -1229,7 +1386,7 @@ function cleaningStats(loc, wk, freq) {
     if (t.status === 'completed') { done++; if (t.approved) appr++; }
     else if (t.status === 'rejected') rej++;
     else { pend++; if (daysBetween(td, t.due) < 0) overdue++; }
-    if (t.status !== 'pending' && !t.before && !t.after) noPhoto++;
+    if (missingPhoto(t)) noPhoto++;
   });
   var total = ts.length || 1;
   return {
@@ -1243,6 +1400,7 @@ function cleaningStats(loc, wk, freq) {
 function tasksInRange(loc, from, to, freq) {
   return DB.tasks.filter(function (t) {
     if (t.loc !== loc) return false;
+    if (jobStopped(tkeyOf(t))) return false;
     if (freq && t.freq !== freq) return false;
     return t.due >= from && t.due <= to;
   });
@@ -1254,7 +1412,7 @@ function cleaningStatsRange(loc, from, to, freq) {
     if (t.status === 'completed') { done++; if (t.approved) appr++; }
     else if (t.status === 'rejected') rej++;
     else { pend++; if (daysBetween(td, t.due) < 0) overdue++; }
-    if (t.status !== 'pending' && !t.before && !t.after) noPhoto++;
+    if (missingPhoto(t)) noPhoto++;
   });
   var total = ts.length || 1;
   return {
@@ -1303,13 +1461,13 @@ function buildAlerts() {
   visibleLocations().forEach(function (L) {
     tasksFor(L.id, wk).forEach(function (t) {
       if (t.status === 'pending' && daysBetween(td, t.due) < 0)
-        out.push({ id: 'a1' + t.id, sev: 2, type: 'Cleaning overdue', loc: L.id, title: t.area, body: 'Due ' + fmtD(t.due) + ' · ' + uname(t.assigned), go: ['task', t.id] });
-      if (t.status !== 'pending' && !t.before && !t.after)
-        out.push({ id: 'a2' + t.id, sev: 1, type: 'Photo missing', loc: L.id, title: t.area, body: 'Photo not uploaded', go: ['task', t.id] });
+        out.push({ id: 'a1' + t.id, sev: 2, type: 'Cleaning overdue', loc: L.id, title: cleanName(t), body: 'Due ' + fmtD(t.due) + ' · ' + uname(t.assigned), go: ['task', t.id] });
+      if (missingPhoto(t))
+        out.push({ id: 'a2' + t.id, sev: 1, type: 'Photo missing', loc: L.id, title: cleanName(t), body: 'Photo not uploaded', go: ['task', t.id] });
       if (t.status === 'rejected')
-        out.push({ id: 'a3' + t.id, sev: 2, type: 'Task rejected', loc: L.id, title: t.area, body: t.reject || 'Rejected by manager', go: ['task', t.id] });
+        out.push({ id: 'a3' + t.id, sev: 2, type: 'Task rejected', loc: L.id, title: cleanName(t), body: t.reject || 'Rejected by manager', go: ['task', t.id] });
       if (t.status === 'completed' && !t.approved && (t.before || t.after))
-        out.push({ id: 'a6' + t.id, sev: 0, type: 'Awaiting approval', loc: L.id, title: t.area, body: 'Completed by ' + uname(t.assigned), go: ['task', t.id] });
+        out.push({ id: 'a6' + t.id, sev: 0, type: 'Awaiting approval', loc: L.id, title: cleanName(t), body: 'Completed by ' + uname(t.assigned), go: ['task', t.id] });
     });
     productsFor(L.id).forEach(function (p) {
       var st = expiryState(p.expiry);
@@ -1538,6 +1696,10 @@ var Cloud = {
       self.saveState();
       self.push(function () {
         if (changed) { saveLocal(); if (typeof render === 'function' && ME) render(); }
+        /* Renamed jobs come down with every sync. It is a handful of short
+           strings shared by all 8 kitchens, so it is fetched whole rather
+           than going through the record-by-record merge. */
+        pullChecklist();
         if (cb) cb(null);
       });
     }
@@ -1648,7 +1810,7 @@ function cloudDot() {
    ===================================================================== */
 var $ = function (s) { return document.querySelector(s); };
 function h(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]; }); }
-var S = { tab: 'home', loc: null, week: null, rangeFrom: null, rangeTo: null, cleanFilter: 'all', expFilter: 'all', labFilter: 'all', repRange: 'week', q: '' };
+var S = { tab: 'home', manage: 'users', manageType: null, loc: null, week: null, rangeFrom: null, rangeTo: null, cleanFilter: 'all', expFilter: 'all', labFilter: 'all', repRange: 'week', q: '' };
 
 function toast(msg) {
   var d = document.createElement('div'); d.className = 'toast'; d.textContent = msg;
@@ -1703,6 +1865,282 @@ function copyText(txt, okMsg) {
     navigator.clipboard.writeText(txt).then(function () { toast(okMsg || 'Copied'); }, fallback);
   } else fallback();
 }
+
+/* ---------------- CLEANING CHECKLIST MANAGEMENT ----------------
+   Adding, renaming and stopping a cleaning job is the Super Admin's alone.
+   There is exactly one such account. Hiding these controls from everyone
+   else is only tidiness — /api/checklist checks the role again on the
+   server, and that is the check that actually decides. */
+function canManageClean() { var p = perm(); return !p.readonly && !!p.superadmin; }
+
+var CLEAN_NAME_MAX = 120;
+
+/* Renders one editable detail of a service. For the Super Admin it is a
+   double-click target; for everyone else it is ordinary text. The span carries
+   its own data-a so a click on it inside a list row does not also open the job
+   underneath — otherwise the first click of a double-click would open a sheet.
+
+   field is what the server is told to change: name, zone, freq, day, loc or
+   status. One mechanism for all of them, so they cannot behave differently. */
+function cellEdit(tk, field, text, cls) {
+  var shown = text === '' || text == null ? '—' : text;
+  if (!canManageClean()) return '<span class="' + h(cls || '') + '">' + h(shown) + '</span>';
+  return '<span class="' + h((cls ? cls + ' ' : '')) + 'cname" data-tk="' + h(tk) + '" data-field="' + h(field) + '" ' +
+    'data-a="cnameHint" title="Double-click to edit">' + h(shown) + '</span>';
+}
+/* The cleaning name, which is the same thing with the field implied. */
+function cnameHtml(tk, text, cls) { return cellEdit(tk, 'name', text, cls); }
+
+/* What each field offers when it is opened. A list means a dropdown; no list
+   means a free-text box. */
+function editChoices(field) {
+  if (field === 'freq') return [['D', 'Daily'], ['W', 'Weekly'], ['M', 'Monthly']];
+  if (field === 'day') {
+    return [['', 'Spread across the week']].concat(DAY_NAMES.map(function (d, i) { return [String(i), 'Every ' + d]; }));
+  }
+  if (field === 'loc') {
+    return [['', 'All ' + LOCATIONS.length + ' kitchens']].concat(LOCATIONS.map(function (L) { return [L.id, L.code + ' ' + L.name]; }));
+  }
+  if (field === 'status') return [['active', 'Active'], ['stopped', 'Stopped — not scheduled']];
+  if (field === 'assignedTo') {
+    /* Anyone who does the work. The Auditor is read-only, so never offered. */
+    return [['', 'Anyone on shift']].concat((DB.users || [])
+      .filter(function (u) { return u.role !== 'auditor'; })
+      .map(function (u) {
+        return [u.id, u.name + ' · ' + (ROLES[u.role] ? ROLES[u.role].label : u.role) +
+          (u.loc ? ' · ' + lname(u.loc) : '')];
+      }));
+  }
+  return null;                                     /* name, zone: free text */
+}
+function currentValue(job, field) {
+  if (field === 'name') return job.area || '';
+  if (field === 'zone') return job.zone || '';
+  if (field === 'freq') return job.freq || 'W';
+  if (field === 'day') return job.day == null ? '' : String(job.day);
+  if (field === 'loc') return job.loc || '';
+  if (field === 'status') return job.stopped ? 'stopped' : 'active';
+  if (field === 'assignedTo') return job.assignedTo || '';
+  return '';
+}
+var FIELD_LABEL = { name: 'Cleaning name', zone: 'Area', freq: 'Frequency', day: 'Schedule', loc: 'Restaurant', status: 'Status', assignedTo: 'Assigned to' };
+
+/* Turns the detail into an input or a dropdown in place. Enter saves, Escape
+   cancels, clicking away saves — the three things people try. A dropdown also
+   saves as soon as a choice is made. */
+var INLINE_BUSY = false;
+function startInlineEdit(el) {
+  if (INLINE_BUSY || !canManageClean()) return;
+  var tk = el.getAttribute('data-tk');
+  var field = el.getAttribute('data-field') || 'name';
+  var job = jobFor(tk);
+  if (!job) { toast('Unknown cleaning job'); return; }
+  INLINE_BUSY = true;
+
+  var current = currentValue(job, field), done = false;
+  var choices = editChoices(field), ctrl;
+
+  if (choices) {
+    ctrl = document.createElement('select');
+    ctrl.className = 'inp cname-in';
+    ctrl.innerHTML = choices.map(function (c) {
+      return '<option value="' + h(c[0]) + '"' + (c[0] === current ? ' selected' : '') + '>' + h(c[1]) + '</option>';
+    }).join('');
+  } else {
+    ctrl = document.createElement('input');
+    ctrl.className = 'inp cname-in';
+    ctrl.value = current;
+    ctrl.maxLength = field === 'zone' ? 60 : CLEAN_NAME_MAX;
+  }
+  ctrl.setAttribute('aria-label', FIELD_LABEL[field] || field);
+  el.replaceWith(ctrl);
+  ctrl.focus();
+  if (ctrl.select) ctrl.select();
+
+  function finish(save) {
+    if (done) return;
+    done = true; INLINE_BUSY = false;
+    if (!save) { render(); return; }               /* Escape — put it back as it was */
+    saveCleanField(tk, field, ctrl.value, current);
+  }
+  ctrl.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') { e.preventDefault(); finish(true); }
+    else if (e.key === 'Escape') { e.preventDefault(); finish(false); }
+  });
+  ctrl.addEventListener('blur', function () { finish(true); });
+  if (choices) ctrl.addEventListener('change', function () { finish(true); });
+}
+
+/* One change, stored once and group-wide, against the service's slot. The task
+   records are never touched, so editing a service cannot disturb work already
+   recorded against it. */
+function saveCleanField(tk, field, value, current) {
+  var body = {}, label;
+
+  if (field === 'name' || field === 'zone') {
+    var text = String(value == null ? '' : value).replace(/\s+/g, ' ').trim();
+    if (!text) { toast(FIELD_LABEL[field] + ' cannot be empty'); render(); return; }
+    var max = field === 'zone' ? 60 : CLEAN_NAME_MAX;
+    if (text.length > max) { toast('Keep it to ' + max + ' characters or fewer'); render(); return; }
+    if (text === current) { render(); return; }
+    body[field] = text; label = text;
+  } else if (field === 'status') {
+    if (value === current) { render(); return; }
+    body.deleted = value === 'stopped';
+    label = value === 'stopped' ? 'stopped' : 'active';
+  } else {
+    if (value === current) { render(); return; }
+    body[field] = field === 'day' ? (value === '' ? null : Number(value)) : (value === '' ? null : value);
+    var ch = (editChoices(field) || []).filter(function (c) { return c[0] === value; })[0];
+    label = ch ? ch[1] : value;
+  }
+
+  var b = builtInFor(tk);
+  body.builtInName = b ? b.area : (jobFor(tk) || {}).area || '';
+
+  /* Saved on the server first. A change everyone sees has to be agreed in one
+     place, so unlike a photo this is not queued for later — offline, the edit
+     is refused rather than going out of step with the rest of the group. */
+  Api.call('PATCH', '/api/checklist/items/' + encodeURIComponent(tk), body)
+    .then(function (res) {
+      if (res && res.item) DB.checklist[tk] = res.item;
+      saveLocal();
+      /* Frequency and schedule decide which jobs exist, so regenerate. */
+      if (['freq', 'day', 'loc', 'status', 'assignedTo'].indexOf(field) > -1) ensureJobs();
+      logAct('clean', 'Service updated: ' + (FIELD_LABEL[field] || field) + ' → ' + label, null);
+      render();
+      toast(FIELD_LABEL[field] + ' updated');
+    }, function (err) {
+      toast(err && err.offline ? 'You are offline — editing needs a connection' : (err.message || 'Could not save'));
+      render();
+    });
+}
+
+/* Kept for the callers that only ever rename. */
+function saveCleanName(tk, value, current) { saveCleanField(tk, 'name', value, current); }
+
+/* ---------- delete ----------
+   The job stops being scheduled anywhere. What was already cleaned,
+   photographed and approved against it keeps its records — the server has no
+   code path from here to a task record. */
+function deleteCleanAsk(tk) {
+  var job = jobFor(tk);
+  if (!job) { toast('Unknown cleaning job'); return; }
+  askConfirm('Delete Cleaning?',
+    'Are you sure you want to delete “' + h(job.area) + '”? It stops being scheduled at every kitchen. ' +
+    'Cleaning already recorded against it keeps its photos and approvals.',
+    'Delete', function (yes) {
+      if (!yes) return;
+      Api.call('DELETE', '/api/checklist/items/' + encodeURIComponent(tk) +
+        '?builtInName=' + encodeURIComponent(job.area), null)
+        .then(function (res) {
+          if (res && res.item) DB.checklist[tk] = res.item;
+          saveLocal();
+          logAct('clean', 'Cleaning deleted: "' + job.area + '"', null);
+          closeSheet(); render();
+          toast('“' + job.area + '” deleted');
+        }, function (err) {
+          toast(err && err.offline ? 'You are offline — deleting needs a connection' : (err.message || 'Could not delete'));
+        });
+    }, true);
+}
+
+/* Undoes a delete. Worth having: a built-in job stopped by mistake could not
+   otherwise be brought back, because its slot is never re-used. */
+function restoreClean(tk) {
+  Api.post('/api/checklist/items/' + encodeURIComponent(tk) + '/restore', {})
+    .then(function (res) {
+      if (res && res.item) DB.checklist[tk] = res.item;
+      saveLocal(); ensureJobs(); closeSheet(); render();
+      toast('Cleaning job put back');
+    }, function (err) { toast(err.message || 'Could not restore'); });
+}
+
+/* ---------- add ---------- */
+function cleanForm() {
+  var zones = {}, zlist = [];
+  CLEAN_TEMPLATE.forEach(function (b) { if (!zones[b.zone]) { zones[b.zone] = 1; zlist.push(b.zone); } });
+  Object.keys(DB.checklist || {}).forEach(function (k) {
+    var o = DB.checklist[k];
+    if (o && o.custom && o.zone && !zones[o.zone]) { zones[o.zone] = 1; zlist.push(o.zone); }
+  });
+
+  var body = '<div class="card">' +
+    '<label class="f"><span>1 · Cleaning name <span style="color:var(--red)">(required)</span></span>' +
+    '<input class="inp" id="c_name" maxlength="' + CLEAN_NAME_MAX + '" placeholder="e.g. Kitchen floor — scrub, degrease &amp; sanitise"></label>' +
+
+    '<label class="f" style="margin-top:12px"><span>2 · Area <span style="color:var(--red)">(required)</span></span>' +
+    '<select class="inp" id="c_zone">' + zlist.map(function (z) {
+      return '<option value="' + h(z) + '">' + h(z) + '</option>';
+    }).join('') + '<option value="__new">Other — type a new area…</option></select></label>' +
+    '<input class="inp" id="c_zone_new" placeholder="New area name" style="display:none;margin-top:8px" maxlength="60">' +
+
+    '<label class="f" style="margin-top:12px"><span>3 · Cleaning type</span>' +
+    '<select class="inp" id="c_freq">' +
+    '<option value="W">Weekly job</option>' +
+    '<option value="M">Monthly heavy job</option></select></label>' +
+
+    '<label class="f" id="c_daywrap" style="margin-top:12px"><span>4 · Schedule</span>' +
+    '<select class="inp" id="c_day"><option value="">Spread across the week</option>' +
+    DAY_NAMES.map(function (d, i) { return '<option value="' + i + '">Every ' + h(d) + '</option>'; }).join('') +
+    '</select></label>' +
+
+    '<label class="f" style="margin-top:12px"><span>5 · Kitchen</span>' +
+    '<select class="inp" id="c_loc"><option value="">All 8 kitchens</option>' +
+    LOCATIONS.map(function (L) { return '<option value="' + h(L.id) + '">' + h(L.name) + '</option>'; }).join('') +
+    '</select></label></div>' +
+
+    '<div class="card sm muted" style="margin-top:10px">A monthly heavy job is scheduled once a month. A weekly job runs every week — ' +
+    'pin it to a weekday, or let it spread across the week with the others.</div>' +
+
+    '<div class="btnrow" style="margin-top:12px">' +
+    '<button class="btn sec" data-a="closeSheet">Cancel</button>' +
+    '<button class="btn ok" data-a="saveClean">Save Cleaning</button></div>';
+
+  openSheet('Add Cleaning', body);
+
+  /* Monthly jobs are not pinned to a weekday, and the free-text area box only
+     appears when it is wanted. */
+  var freq = document.getElementById('c_freq'), wrap = document.getElementById('c_daywrap');
+  var zone = document.getElementById('c_zone'), zoneNew = document.getElementById('c_zone_new');
+  if (freq && wrap) freq.addEventListener('change', function () { wrap.style.display = freq.value === 'M' ? 'none' : ''; });
+  if (zone && zoneNew) zone.addEventListener('change', function () {
+    zoneNew.style.display = zone.value === '__new' ? '' : 'none';
+    if (zone.value === '__new') zoneNew.focus();
+  });
+  var n = document.getElementById('c_name'); if (n) n.focus();
+}
+
+function saveClean() {
+  var g = function (id) { var e = document.getElementById(id); return e ? e.value : ''; };
+  var name = g('c_name').replace(/\s+/g, ' ').trim();
+  if (!name) { toast('Enter a cleaning name'); return; }
+  if (name.length > CLEAN_NAME_MAX) { toast('Keep the name to ' + CLEAN_NAME_MAX + ' characters or fewer'); return; }
+
+  var zone = g('c_zone') === '__new' ? g('c_zone_new').replace(/\s+/g, ' ').trim() : g('c_zone');
+  if (!zone) { toast('Choose or enter an area'); return; }
+
+  var freq = g('c_freq') === 'M' ? 'M' : 'W';
+  var day = freq === 'W' && g('c_day') !== '' ? Number(g('c_day')) : null;
+  var loc = g('c_loc') || null;
+
+  Api.post('/api/checklist/items', { name: name, zone: zone, freq: freq, day: day, loc: loc })
+    .then(function (res) {
+      var item = res && res.item;
+      if (!item) { toast('Could not add the cleaning'); return; }
+      DB.checklist[item.tkey] = item;
+      /* Generate this period's work straight away, so the new job is in the
+         cleaning list before the sheet has finished closing. */
+      ensureJobs();
+      saveLocal();
+      logAct('clean', 'Cleaning added: "' + name + '"', loc);
+      closeSheet(); render();
+      toast('“' + name + '” added');
+    }, function (err) {
+      toast(err && err.offline ? 'You are offline — adding a cleaning needs a connection' : (err.message || 'Could not add the cleaning'));
+    });
+}
+
 
 /* ---------- camera capture + compress ---------- */
 function capture(cb) {
@@ -1787,18 +2225,30 @@ function header(title, sub) {
 function tabbar() {
   var items = [['home', 'Home', 'home'], ['clean', 'Cleaning', 'clean'], ['exp', 'Expiry', 'exp'], ['lab', 'Labels', 'lab'], ['rep', 'Reports', 'rep']];
   if (ME.role === 'staff') items = items.slice(0, 4);
-  /* The User Management panel opens as a sheet over the current tab, so it is
-     a shortcut here rather than a tab of its own. The count is the queue only
-     the Super Admin can clear: sign-ups and forgotten passwords. */
-  var superBtn = '';
+
+  var nav = items.map(function (t) {
+    return '<button class="tab' + (S.tab === t[0] ? ' on' : '') + '" data-a="tab" data-x="' + t[0] + '">' + ic(t[2]) + '<span>' + t[1] + '</span></button>';
+  }).join('');
+
+  /* Management sits in the nav — the left sidebar on a wide screen — and
+     expands to its two sub-items. Nobody but the Super Admin is given it, and
+     it exists in this one place only. On a phone the nav is a horizontal bar
+     with no room to nest, so the sub-items there are drawn as a panel above
+     it instead (mgMenuPanel); CSS shows whichever fits. */
   if (perm().superadmin) {
     var waiting = PENDING_SIGNUPS + RESET_REQUESTS;
-    superBtn = '<button class="tab" data-a="superDash">' + ic('shield') + '<span>User Management' +
+    nav += '<button class="tab' + (S.tab === 'manage' ? ' on' : '') + '" data-a="mgmtMenu" aria-expanded="' + (MGMT_MENU ? 'true' : 'false') + '">' +
+      ic('shield') + '<span>Management ' + (MGMT_MENU ? '⌄' : '›') +
       (waiting ? '<span class="tcount">' + (waiting > 99 ? '99+' : waiting) + '</span>' : '') + '</span></button>';
+    if (MGMT_MENU) {
+      nav += MGMT_ITEMS.map(function (it) {
+        return '<button class="tab subtab' + (S.tab === 'manage' && S.manage === it[0] ? ' on' : '') +
+          '" data-a="mgmtOpen" data-x="' + it[0] + '"><span class="subdot">' + it[1] + '</span><span>' + it[2] + '</span></button>';
+      }).join('');
+    }
   }
-  $('#tabbar').innerHTML = '<div class="tabs"><div class="tabs-in">' + items.map(function (t) {
-    return '<button class="tab' + (S.tab === t[0] ? ' on' : '') + '" data-a="tab" data-x="' + t[0] + '">' + ic(t[2]) + '<span>' + t[1] + '</span></button>';
-  }).join('') + superBtn + '</div></div>';
+
+  $('#tabbar').innerHTML = mgMenuPanel() + '<div class="tabs"><div class="tabs-in">' + nav + '</div></div>';
 }
 
 /* ---------- login ---------- */
@@ -2259,7 +2709,7 @@ function tuesdayCard(scope, wk) {
 
   var out = '<div class="sec-t">Cleaning · every Tuesday</div><div class="card pad0">';
   if (!total) {
-    out += '<div class="sm muted" style="padding:12px 14px">' + TUESDAY_JOBS.map(function (j) { return h(j.area.split(' — ')[0]); }).join(' · ') +
+    out += '<div class="sm muted" style="padding:12px 14px">' + pinnedJobs(scope || null).filter(function (j) { return j.day === 1; }).map(function (j) { return h(j.area.split(' — ')[0]); }).join(' · ') +
       '<div class="xs" style="margin-top:6px">Nothing due this week.' +
       '</div></div>';
   } else if (scope) {
@@ -2341,10 +2791,12 @@ function meSheet() {
     caps.map(function (c) { return '<li style="margin:5px 0">' + h(c) + '</li>'; }).join('') + '</ul></div>' +
     '<button class="btn sec" data-a="changePw" style="margin-bottom:10px">🔒 Change my password</button>' +
     (p.manage ? '<button class="btn sec" data-a="cloudSetup" style="margin-bottom:10px">☁️ Cloud sync — ' + h(Cloud.label()) + '</button>' : '') +
-    (p.superadmin ? '<button class="btn" data-a="superDash" style="margin-bottom:10px">🛡️ User Management panel</button>' : '') +
-    (p.manage ? '<button class="btn sec" data-a="users" style="margin-bottom:10px">👥 People, roles &amp; passwords</button>' +
-      '<button class="btn sec" data-a="checklist" style="margin-bottom:10px">📋 Cleaning checklist</button>' +
-      '<button class="btn sec" data-a="activity" style="margin-bottom:10px">🕘 Recent activity</button>' : '') +
+    /* The Super Admin manages everything from the Management menu in the tab
+       bar — offering a second way in here would be a duplicate. Other admins
+       have no Management menu, so they keep these. */
+    (!p.superadmin && p.manage ? '<button class="btn sec" data-a="users" style="margin-bottom:10px">👥 People, roles &amp; passwords</button>' +
+      '<button class="btn sec" data-a="checklist" style="margin-bottom:10px">📋 Cleaning checklist</button>' : '') +
+    (p.manage ? '<button class="btn sec" data-a="activity" style="margin-bottom:10px">🕘 Recent activity</button>' : '') +
     '<button class="btn sec" data-a="help" style="margin-bottom:10px">❓ How to use the app</button>' +
     '<button class="btn sec" data-a="install" style="margin-bottom:10px">📲 Add to home screen</button>' +
     '<button class="btn sec" data-a="about" style="margin-bottom:10px">ℹ️ About &amp; version</button>' +
@@ -2385,7 +2837,7 @@ function aboutSheet() {
     '<div class="sm muted">Version ' + APP_VERSION + '</div></div>' +
     '<div class="card">' +
     kv('Locations', LOCATIONS.length + ' across Surat &amp; Ahmedabad') +
-    '<div style="height:10px"></div>' + kv('Cleaning jobs', WEEKLY_JOBS.length + ' weekly · ' + MONTHLY_JOBS.length + ' monthly') +
+    '<div style="height:10px"></div>' + kv('Cleaning jobs', weeklyJobs(null).length + ' weekly · ' + monthlyJobs(null).length + ' monthly') +
     '<div style="height:10px"></div>' + kv('People', DB.users.length) +
     '<div style="height:10px"></div>' + kv('Products tracked', DB.products.length) +
     '<div style="height:10px"></div>' + kv('Cloud sync', Cloud.label()) +
@@ -2423,15 +2875,16 @@ function closeSheet() { SHEET_STACK = []; $('#modal').innerHTML = ''; document.b
 /* ---------------- CLEANING ---------------- */
 function taskRow(t) {
   var ph = t.before || t.after;
-  return '<button class="lrow" data-a="task" data-x="' + t.id + '">' +
+  var row = '<button class="lrow" data-a="task" data-x="' + t.id + '">' +
     (ph ? '<img class="thumb" src="' + photoSrc(t.after || t.before) + '">' :
       '<span class="thumb" style="display:grid;place-items:center;color:#b8bfc4;font-size:19px">🧽</span>') +
-    '<span class="grow"><span class="t trunc">' + h(t.area) + '</span>' +
+    '<span class="grow">' + cnameHtml(tkeyOf(t), cleanName(t), 't trunc') +
     '<div class="xs muted" style="margin:2px 0 5px">' + h(t.zone) + ' · ' + h(uname(t.assigned).split(' ')[0]) + ' · due ' + fmtD(t.due) + '</div>' +
     statusPill(t) + (t.freq === 'M' ? ' ' + pill('MONTHLY', 'p-blu') : '') +
     (fixedDay(t) != null ? ' ' + pill('EVERY ' + DAY_NAMES[fixedDay(t)].toUpperCase(), 'p-yel') : '') +
-    (t.status !== 'pending' && !t.before && !t.after ? ' ' + pill('NO PHOTO', 'p-org') : '') +
+    (missingPhoto(t) ? ' ' + pill('NO PHOTO', 'p-org') : '') +
     '</span><span class="chev">›</span></button>';
+  return row;
 }
 function renderClean() {
   var loc = S.loc, from = S.rangeFrom, to = S.rangeTo, p = perm();
@@ -2450,7 +2903,7 @@ function renderClean() {
     if (f === 'done') return t.status === 'completed';
     if (f === 'rejected') return t.status === 'rejected';
     if (f === 'approve') return t.status === 'completed' && !t.approved;
-    if (f === 'nophoto') return t.status !== 'pending' && !t.before && !t.after;
+    if (f === 'nophoto') return missingPhoto(t);
     if (f === 'mine') return t.assigned === ME.id;
     return true;
   });
@@ -2474,10 +2927,11 @@ function renderClean() {
   /* ---- every-Tuesday jobs, kept together in their own section ---- */
   if (f !== 'tuesday') {
     var tueDone = tue.filter(function (t) { return t.status === 'completed'; }).length;
-    html += '<div class="sec-t">Every Tuesday · ' + TUESDAY_JOBS.length + ' job' + (TUESDAY_JOBS.length === 1 ? '' : 's') + '</div><div class="card pad0">' +
+    var pinned = pinnedJobs(loc).filter(function (j) { return j.day === 1; });
+    html += '<div class="sec-t">Every Tuesday · ' + pinned.length + ' job' + (pinned.length === 1 ? '' : 's') + '</div><div class="card pad0">' +
       (tue.length
         ? '<div class="xs muted b" style="padding:10px 14px 4px">' + tueDone + ' of ' + tue.length + ' done · week of ' + h(fmtD(tueFrom)) + ' – ' + h(fmtD(tueTo)) + '</div>' + tue.map(taskRow).join('')
-        : '<div class="sm muted" style="padding:12px 14px">' + TUESDAY_JOBS.map(function (j) { return h(j.area.split(' — ')[0]); }).join(' · ') +
+        : '<div class="sm muted" style="padding:12px 14px">' + pinned.map(function (j) { return h(j.area.split(' — ')[0]); }).join(' · ') +
           '<div class="xs" style="margin-top:6px">None due in the week of ' + h(fmtD(tueFrom)) + ' – ' + h(fmtD(tueTo)) + '.' +
           '</div></div>') +
       '</div>';
@@ -2499,6 +2953,7 @@ function renderClean() {
   }).join('') : '<div class="card"><div class="empty"><div class="ic">🧼</div>Nothing here</div></div>';
   html += '<div style="height:20px"></div></div>';
   $('#app').innerHTML = html;
+  if (canManageClean()) $('#app').insertAdjacentHTML('beforeend', '<button class="fab" data-a="addClean">＋ Add Cleaning</button>');
   tabbar();
 }
 function recentWeeks(n) {
@@ -2511,7 +2966,8 @@ function taskSheet(id) {
   var p = perm(), canDo = !p.readonly && (p.all || ME.loc === t.loc);
   var isMine = true; /* anyone working in that kitchen may record the clean; the app logs who did it */
   var body = '<div class="card"><div class="row" style="align-items:flex-start"><div class="grow">' +
-    '<div class="b" style="font-size:17px;line-height:1.25">' + h(t.area) + '</div>' +
+    '<div class="b" style="font-size:17px;line-height:1.25">' + cnameHtml(tkeyOf(t), cleanName(t)) + '</div>' +
+    renameNote(t) +
     '<div class="sm muted">' + h(t.zone) + ' · ' + (t.freq === 'M' ? 'Monthly heavy job' : fixedDay(t) != null ? 'Weekly job · every ' + DAY_NAMES[fixedDay(t)] : 'Weekly job') + ' · ' + h(lname(t.loc)) + '</div></div>' + statusPill(t) + '</div>' +
     '<div class="grid2" style="margin-top:12px">' +
     kv('Assigned to', uname(t.assigned)) + kv('Due date', fmtD(t.due)) +
@@ -2542,9 +2998,30 @@ function taskSheet(id) {
   if (canDo && p.approve && t.status !== 'pending') {
     body += '<div style="height:10px"></div><button class="btn sec" data-a="reopen" data-x="' + t.id + '">↺ Re-open task</button>';
   }
+  if (canManageClean()) {
+    body += '<div class="card sm muted" style="margin-top:12px">Double-click the cleaning name above to rename it.</div>' +
+      '<div style="height:10px"></div><button class="btn no" data-a="deleteClean" data-x="' + h(tkeyOf(t)) + '">🗑 Delete cleaning</button>';
+  }
   openSheet('Cleaning task', body);
 }
 function kv(k, v) { return '<div><div class="xs muted b" style="text-transform:uppercase;letter-spacing:.4px">' + h(k) + '</div><div class="sm b">' + h(v) + '</div></div>'; }
+/* Shown under a renamed job's title: what it used to be called and who
+   changed it, so an auditor reading an old record can still tie it back. */
+function renameNote(t) {
+  var tk = tkeyOf(t), m = ckItem(tk);
+  if (!m) return '';
+  var b = builtInFor(tk);
+  var was = m.prevName || (b && m.name && b.area !== m.name ? b.area : null);
+  var out = '';
+  if (m.deleted) out += '<div class="xs b" style="margin-top:3px;color:var(--red)">This cleaning job has been deleted — kept for the record</div>';
+  if (!m.custom && m.name) {
+    out += '<div class="xs muted" style="margin-top:3px">Renamed' +
+      (m.byName ? ' by ' + h(m.byName) : '') +
+      (m.at ? ' · ' + h(fmtDT(new Date(m.at).getTime())) : '') +
+      (was ? ' · was “' + h(was) + '”' : '') + '</div>';
+  }
+  return out;
+}
 function photoBox(t) {
   var v = t.before || t.after, p = perm(), can = !p.readonly && (p.all || ME.loc === t.loc) && (p.approve || t.approved !== true);
   return '<div class="photo tall" ' + (can ? 'data-a="shoot" data-x="' + t.id + '"' : '') + '>' +
@@ -2928,9 +3405,9 @@ function violations(scope, weeks) {
   var v = { clean: [], exp: [], lab: [] }, td = ymd(today());
   scope.forEach(function (L) {
     uniqueTasks(L.id, weeks).forEach(function (t) {
-      if (t.status === 'rejected') v.clean.push({ loc: L.id, t: t.area, d: 'Rejected: ' + (t.reject || '—'), id: t.id });
-      else if (t.status === 'pending' && daysBetween(td, t.due) < 0) v.clean.push({ loc: L.id, t: t.area, d: 'Overdue since ' + fmtD(t.due), id: t.id });
-      else if (t.status !== 'pending' && !t.before && !t.after) v.clean.push({ loc: L.id, t: t.area, d: 'Photo evidence missing', id: t.id });
+      if (t.status === 'rejected') v.clean.push({ loc: L.id, t: cleanName(t), d: 'Rejected: ' + (t.reject || '—'), id: t.id });
+      else if (t.status === 'pending' && daysBetween(td, t.due) < 0) v.clean.push({ loc: L.id, t: cleanName(t), d: 'Overdue since ' + fmtD(t.due), id: t.id });
+      else if (missingPhoto(t)) v.clean.push({ loc: L.id, t: cleanName(t), d: 'Photo evidence missing', id: t.id });
     });
     productsFor(L.id).forEach(function (p) {
       var st = expiryState(p.expiry);
@@ -2962,9 +3439,27 @@ function staffStats(scope, weeks) {
     var r = m[k]; r.pct = Math.round((r.ok / (r.total || 1)) * 100); return r;
   }).sort(function (a, b) { return b.pct - a.pct; });
 }
+/* Like tasksFor, but INCLUDING jobs that have since been stopped. Deleting a
+   cleaning job stops it being done; it does not unmake the cleaning that was
+   already done, photographed and approved. The evidence stays reachable. */
+function tasksForAudit(loc, wk) {
+  var mid = wk ? monthOfWeek(wk) : null;
+  return DB.tasks.filter(function (t) {
+    if (t.loc !== loc) return false;
+    if (!wk) return true;
+    return t.freq === 'M' ? t.period === mid : t.period === wk;
+  });
+}
 function photoEvidence(scope, weeks) {
-  var out = [];
-  scope.forEach(function (L) { uniqueTasks(L.id, weeks).forEach(function (t) { if (t.before || t.after) out.push(t); }); });
+  var out = [], seen = {};
+  scope.forEach(function (L) {
+    weeks.forEach(function (w) {
+      tasksForAudit(L.id, w).forEach(function (t) {
+        if (seen[t.id] || !(t.before || t.after)) return;
+        seen[t.id] = 1; out.push(t);
+      });
+    });
+  });
   return out;
 }
 function csvExport() {
@@ -3213,6 +3708,8 @@ function addUserSheet() {
   openSheet('Create a new user',
     '<div class="card">' +
     '<label class="f"><span>Full name</span><input class="inp" id="u_name" placeholder="e.g. Suresh" autocomplete="off"></label>' +
+    '<label class="f"><span>Email</span><input class="inp" id="u_email" type="email" placeholder="name@bookends.in" autocapitalize="none" autocorrect="off" spellcheck="false">' +
+    '<div class="xs muted" style="margin-top:6px">Optional. Signing in still uses the login ID below.</div></label>' +
     '<label class="f"><span>Login ID</span><input class="inp" id="u_uid" placeholder="filled in automatically" autocapitalize="none" autocorrect="off" spellcheck="false">' +
     '<div class="xs muted" style="margin-top:6px">Lower case letters and numbers only. Must be different from everyone else\'s.</div></label>' +
     '<label class="f"><span>Role</span><select class="inp" id="u_role">' +
@@ -3227,9 +3724,14 @@ function addUserSheet() {
        own on first sign-in, and only the bcrypt hash is ever stored. */
     '<label class="f"><span>Initial password</span><input class="inp" id="u_pw" type="text" placeholder="leave blank for ' + h(DEFAULT_PW) + '" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false">' +
     '<div class="xs muted" style="margin-top:6px">At least ' + MIN_PW_LEN + ' characters. Shown in plain text so you can read it out — it is stored only as an encrypted hash and cannot be recovered afterwards.</div></label>' +
+    '<label class="f"><span>Account status</span><select class="inp" id="u_status">' +
+    '<option value="active" selected>Active — can sign in now</option>' +
+    '<option value="disabled">Disabled — set up now, switch on later</option>' +
+    '</select></label>' +
     (NEWU_ERR ? '<div class="card" style="background:#fdecea;border-color:#f6c9c4;margin:0 0 12px"><b class="sm">' + h(NEWU_ERR) + '</b></div>' : '') +
     '</div>' +
     '<div class="card sm muted">They must choose their own password the first time they sign in, whichever one you set here.</div>' +
+    '<div class="card sm muted">Job type and the specific services this person is responsible for are set in Job Management. Until then they can work on every service at their kitchen.</div>' +
     '<button class="btn" data-a="saveUser">Create user</button>');
   var n = document.getElementById('u_name');
   n.addEventListener('input', function () {
@@ -3255,6 +3757,9 @@ function saveUser() {
   var loc = document.getElementById('u_loc').value;
   /* Not trimmed: a space can legitimately be part of a password. */
   var pw = document.getElementById('u_pw').value || '';
+  var emailEl = document.getElementById('u_email');
+  var statusEl = document.getElementById('u_status');
+  var status = statusEl ? statusEl.value : 'active';
 
   if (!name) { NEWU_ERR = 'Enter a name'; closeSheet(); addUserSheet(); return; }
   /* Caught here so the admin is not left waiting on a round trip for an
@@ -3273,7 +3778,9 @@ function saveUser() {
     uid: uid || undefined,        /* omitted -> the server derives it */
     role: role,
     loc: ROLES[role].all ? null : loc,
-    password: pw || undefined     /* omitted -> the server uses DEFAULT_PASSWORD */
+    password: pw || undefined,    /* omitted -> the server uses DEFAULT_PASSWORD */
+    disabled: status === 'disabled',
+    email: emailEl ? emailEl.value.trim() : ''
   }).then(function (data) {
     NEWU_BUSY = false;
     NEWU_ERR = '';
@@ -3290,7 +3797,8 @@ function saveUser() {
       '<div class="card" style="margin-top:14px;text-align:left"><div class="xs muted b">LOGIN ID</div><div class="b" style="font-size:20px">' + h(u.uid) + '</div>' +
       '<div class="xs muted b" style="margin-top:10px">PASSWORD</div><div class="b" style="font-size:20px">' + h(data.initialPassword) + '</div></div>' +
       '<div class="sm muted">Give these to ' + h(u.name.split(' ')[0]) + ' now — the password is not shown again. The app will ask them to set their own on first sign-in.</div></div>' +
-      '<button class="btn" data-a="users">Back to people</button>');
+      '<button class="btn" data-a="closeSheet">Done</button>');
+    if (typeof mgmtLoadUsers === 'function') mgmtLoadUsers(true);
   }, function (err) {
     NEWU_BUSY = false;
     NEWU_ERR = err.message || 'Could not create the user';
@@ -3299,28 +3807,73 @@ function saveUser() {
 }
 function checklistSheet() {
   var body = '<div class="card sm"><b>All-electric kitchens.</b> <span class="muted">No gas appliances anywhere in the group, so the checklist covers induction hobs, electric combi ovens, griddles, fryers and salamanders — plus a weekly electrical-safety wipe-down (dry cloth only around plug points).</span></div>' +
-    '<div class="card sm muted">' + WEEKLY_JOBS.length + ' weekly jobs are generated every Monday and ' + MONTHLY_JOBS.length +
+    '<div class="card sm muted">' + weeklyJobs(null).length + ' weekly jobs are generated every Monday and ' + monthlyJobs(null).length +
     ' heavy jobs on the 1st of each month — for all 8 locations.</div>';
-  [['Every week', WEEKLY_JOBS], ['Once a month', MONTHLY_JOBS]].forEach(function (grp) {
-    var zones = {};
-    grp[1].forEach(function (t) { (zones[t.zone] = zones[t.zone] || []).push(t); });
+  if (canManageClean()) {
+    body += '<button class="btn ok" data-a="addClean">＋ Add Cleaning</button>' +
+      '<div class="card sm muted" style="margin-top:10px">Double-click a cleaning name to rename it. A rename or a delete applies at every kitchen.</div>';
+  }
+  [['Every week', weeklyJobs(null)], ['Once a month', monthlyJobs(null)]].forEach(function (grp) {
+    var zones = {}, order = [];
+    grp[1].forEach(function (t) { if (!zones[t.zone]) { zones[t.zone] = []; order.push(t.zone); } zones[t.zone].push(t); });
     body += '<div class="sec-t">' + grp[0] + ' · ' + grp[1].length + ' jobs</div>';
-    Object.keys(zones).forEach(function (z) {
+    order.forEach(function (z) {
       body += '<div class="card pad0" style="margin-bottom:8px"><div class="xs b" style="padding:9px 14px 4px;color:var(--mut);text-transform:uppercase;letter-spacing:.6px">' + h(z) + '</div>' +
         zones[z].map(function (t) {
+          var o = ckItem(t.tk), b0 = builtInFor(t.tk);
           return '<div class="lrow" style="padding:9px 14px"><span class="dot" style="background:' + (t.freq === 'M' ? 'var(--blue)' : 'var(--grn)') + '"></span>' +
-            '<span class="grow sm">' + h(t.area) + '</span>' +
-            (t.day != null ? '<span class="xs b" style="color:var(--brand)">Every ' + DAY_NAMES[t.day] + '</span>' : '') + '</div>';
+            '<span class="grow sm">' + cnameHtml(t.tk, t.area) +
+            (o && o.name && b0 && b0.area !== o.name ? '<div class="xs muted">was “' + h(b0.area) + '”</div>' : '') +
+            (t.custom ? '<div class="xs muted">Added' + (t.loc ? ' · ' + h(lname(t.loc)) + ' only' : ' · all 8 kitchens') + '</div>' : '') + '</span>' +
+            (t.day != null ? '<span class="xs b" style="color:var(--brand)">Every ' + DAY_NAMES[t.day] + '</span>' : '') +
+            (canManageClean() ? '<button class="editn" data-a="deleteClean" data-x="' + h(t.tk) + '" title="Delete cleaning" aria-label="Delete cleaning">🗑</button>' : '') +
+            '</div>';
         }).join('') + '</div>';
     });
   });
+
+  /* Stopped jobs, so a delete by mistake is visible and reversible. */
+  if (canManageClean()) {
+    var stopped = Object.keys(DB.checklist || {}).filter(function (tk) { return DB.checklist[tk].deleted; });
+    if (stopped.length) {
+      body += '<div class="sec-t">Deleted · ' + stopped.length + '</div><div class="card pad0">' +
+        stopped.map(function (tk) {
+          var o = DB.checklist[tk], b0 = builtInFor(tk);
+          return '<div class="lrow" style="padding:9px 14px"><span class="grow sm" style="color:var(--mut)">' +
+            h(o.name || (b0 ? b0.area : tk)) +
+            '<div class="xs muted">Not scheduled · recorded work kept</div></span>' +
+            '<button class="btn sec" style="width:auto;padding:6px 12px" data-a="restoreClean" data-x="' + h(tk) + '">Put back</button></div>';
+        }).join('') + '</div>';
+    }
+    body += '<button class="btn sec" data-a="renameHistory" style="margin-top:12px">🕘 Checklist history</button>';
+  }
   openSheet('Full kitchen deep-clean checklist', body);
+}
+
+/* The group-wide audit trail, read from the server rather than from this
+   device's activity log, so it shows every change by anyone. */
+function renameHistorySheet() {
+  openSheet('Checklist history', '<div class="card sm muted center">Loading…</div>');
+  Api.get('/api/checklist/items/history').then(function (res) {
+    var rows = (res && res.history) || [];
+    SHEET_STACK.pop();   /* replace the Loading… sheet rather than stacking on it */
+    var LABEL = { add: 'Added', rename: 'Renamed', 'delete': 'Deleted', restore: 'Put back' };
+    openSheet('Checklist history', '<div class="card pad0">' + (rows.length ? rows.map(function (r) {
+      return '<div class="lrow"><span class="grow"><span class="t sm">' + h(r.newName || r.prevName || r.tkey) + '</span>' +
+        '<div class="xs muted">' + h(LABEL[r.action] || r.action) +
+        (r.action === 'rename' && r.prevName ? ' · was “' + h(r.prevName) + '”' : '') + '</div>' +
+        '<div class="xs muted">' + h(r.byName || '—') + ' · ' + h(fmtDT(new Date(r.at).getTime())) + '</div></span></div>';
+    }).join('') : '<div class="empty"><div class="ic">🕘</div>The checklist has not been changed yet</div>') + '</div>');
+  }, function (err) {
+    SHEET_STACK.pop();
+    openSheet('Checklist history', '<div class="card sm">' + h(err && err.offline ? 'You are offline — the checklist history is kept on the server.' : (err.message || 'Could not load the history')) + '</div>');
+  });
 }
 
 /* ---------------- PHOTOS (local first, cloud in the background) ---------------- */
 function setPhoto(t, which, dataUrl) {
   t[which] = dataUrl; save('tasks', t);
-  logAct('photo', 'photo added: ' + t.area, t.loc);
+  logAct('photo', 'photo added: ' + cleanName(t), t.loc);
   taskSheet(t.id); toast('Photo saved');
   if (Cloud.on()) Cloud.uploadPhoto(dataUrl, t.loc, function (err, url) {
     if (!err && url && url !== dataUrl && t[which] === dataUrl) { t[which] = url; save('tasks', t); }
@@ -3443,12 +3996,720 @@ function doInstall() {
   });
 }
 
+/* ---------------- MANAGEMENT ----------------
+   The Super Admin's control room: the accounts, and the work the group does.
+   Only the Super Admin reaches it — the menu is not rendered for anyone else,
+   and every endpoint behind it checks the role again on the server.
+
+   There is ONE way in: the Management item in the tab bar, which expands to
+   User Management and Job Management. Nothing else in the app offers a second
+   route to either, so there is only ever one place to look.
+
+   Both screens are drawn with the same helpers below — same header, stats,
+   search, filter chips, table, badges and modal — so they are the same screen
+   wearing different data. */
+
+var MGMT_USERS = null;          // accounts, from the server; null before the first load
+var MGMT_ERR = '';
+var MGMT_BUSY = false;
+var MGMT_Q = '';                // search text, shared by both screens
+var MGMT_FILTER = 'all';
+var MGMT_WHO = '';              // Job Management: show one person's jobs, '' = everyone
+/* Open to begin with, so the Dashboard shows User Management and Job
+   Management without anyone having to discover that the row expands. */
+var MGMT_MENU = true;
+
+/* ---------- shared chrome ---------- */
+
+function mgHead(title, sub, back) {
+  return header(title, sub) + '<div class="wrap">' +
+    (back ? '<button class="btn sec" data-a="' + back[0] + '" style="margin-bottom:12px">‹ ' + h(back[1]) + '</button>' : '');
+}
+function mgStatsRow(cells) {
+  return '<div class="stats">' + cells.map(function (c) { return statCard(c[0], c[1], c[2] || 'var(--ink)'); }).join('') + '</div>';
+}
+function mgSearchBox(value, placeholder) {
+  return '<label class="f" style="margin-top:12px"><span>Search</span>' +
+    '<input class="inp" id="mg_q" placeholder="' + h(placeholder) + '" value="' + h(value) + '"></label>';
+}
+function mgChips(list, current) {
+  return '<div class="chips">' + list.map(function (c) {
+    return '<button class="chip' + (current === c[0] ? ' on' : '') + '" data-a="mgFilter" data-x="' + c[0] + '">' + h(c[1]) + '</button>';
+  }).join('') + '</div>';
+}
+function mgTable(cols, rows, emptyMsg) {
+  return '<div class="tablewrap"><table class="utable"><thead><tr>' +
+    cols.map(function (c) { return '<th>' + h(c) + '</th>'; }).join('') +
+    '</tr></thead><tbody>' +
+    (rows.length ? rows.join('')
+      : '<tr><td colspan="' + cols.length + '" class="sm muted center" style="padding:18px">' + h(emptyMsg) + '</td></tr>') +
+    '</tbody></table></div>';
+}
+function mgBtn(action, x, icon, title, style) {
+  return '<button class="iconbtn sq"' + (style ? ' style="' + style + '"' : '') +
+    ' data-a="' + action + '" data-x="' + h(x) + '" title="' + h(title) + '" aria-label="' + h(title) + '">' + icon + '</button>';
+}
+/* Re-renders the current management screen and puts the caret back where it
+   was, so typing in the search box is not interrupted. */
+function mgWireSearch(redraw) {
+  var qf = document.getElementById('mg_q');
+  if (!qf) return;
+  qf.addEventListener('input', function () {
+    MGMT_Q = this.value;
+    var at = this.selectionStart;
+    redraw();
+    var again = document.getElementById('mg_q');
+    if (again) { again.focus(); try { again.setSelectionRange(at, at); } catch (e) { } }
+  });
+}
+function mgMatches(hayParts) {
+  var q = MGMT_Q.trim().toLowerCase();
+  if (!q) return true;
+  return hayParts.join(' ').toLowerCase().indexOf(q) > -1;
+}
+
+/* ---------- the Management menu ----------
+   It lives in the nav (the left sidebar on a wide screen) and nowhere else.
+   MGMT_ITEMS is the single list both renderings read from, so the sidebar and
+   the phone panel can never drift apart. */
+var MGMT_ITEMS = [
+  ['users', '👥', 'User Management', 'Users, roles and assignments'],
+  ['jobs', '💼', 'Job Management', 'Job types, services and setup']
+];
+
+/* The phone rendering: a panel above the bottom bar, because a horizontal bar
+   has no room to nest items. Hidden by CSS once the nav becomes a sidebar. */
+function mgMenuPanel() {
+  if (!MGMT_MENU || !ME || !perm().superadmin) return '';
+  var waiting = PENDING_SIGNUPS + RESET_REQUESTS;
+  return '<div class="mgmenu">' + MGMT_ITEMS.map(function (it) {
+    var badge = it[0] === 'users' ? waiting : 0;
+    return '<button class="mgmenu-i' + (S.tab === 'manage' && S.manage === it[0] ? ' on' : '') +
+      '" data-a="mgmtOpen" data-x="' + it[0] + '">' +
+      '<span class="mgmenu-ic">' + it[1] + '</span>' +
+      '<span class="grow"><span class="b sm">' + it[2] + '</span>' +
+      '<div class="xs muted">' + it[3] + '</div></span>' +
+      (badge ? '<span class="badge" style="position:static;margin-right:8px">' + badge + '</span>' : '') +
+      '<span class="chev">›</span></button>';
+  }).join('') + '</div>';
+}
+
+function renderManage() {
+  if (!perm().superadmin) { S.tab = 'home'; render(); return; }
+  if (S.manage === 'jobs') renderJobManagement();
+  else if (S.manage === 'type') renderTypeServices();
+  else renderUserManagement();
+  /* Every other screen redraws the tab bar as it finishes; these must too, so
+     the menu closes behind the choice and the tab shows as selected. */
+  tabbar();
+}
+
+/* ---------------- USER MANAGEMENT ---------------- */
+
+function mgmtLoadUsers(force) {
+  if (MGMT_BUSY || (MGMT_USERS && !force)) return;
+  MGMT_BUSY = true;
+  Api.get('/api/admin/users').then(function (data) {
+    MGMT_BUSY = false; MGMT_ERR = '';
+    MGMT_USERS = data.users || [];
+    var pend = MGMT_USERS.filter(function (u) { return u.pending; }).length;
+    if (pend !== PENDING_SIGNUPS) PENDING_SIGNUPS = pend;
+    if (S.tab === 'manage') render();
+  }, function (err) {
+    MGMT_BUSY = false;
+    MGMT_ERR = err.message || 'Could not load the accounts';
+    if (S.tab === 'manage') render();
+  });
+}
+
+/* What this person can work on today. Per-user job assignment is not built
+   yet, so everyone works on every service at their kitchen — say so plainly
+   rather than showing a number that pretends to be an assignment. */
+function assignedJobsLabel(u) {
+  if (u.pending) return '—';
+  var all = ROLES[u.role] && ROLES[u.role].all;
+  var n = checklistJobs(null, all ? null : u.loc).length;
+  return n + ' service' + (n === 1 ? '' : 's') + ' · ' + (all ? 'all kitchens' : h(lname(u.loc)));
+}
+function userStatus(u) {
+  if (u.pending) return { label: 'PENDING', cls: 'p-org' };
+  if (u.disabled) return { label: 'DISABLED', cls: 'p-red' };
+  return { label: 'ACTIVE', cls: 'p-grn' };
+}
+
+function renderUserManagement() {
+  var html = mgHead('USER MANAGEMENT', 'Management · Super Admin', ['mgmtBack', 'Dashboard']);
+
+  if (MGMT_ERR) {
+    html += '<div class="card" style="background:#fdecea;border-color:#f6c9c4"><b class="sm">' + h(MGMT_ERR) + '</b>' +
+      '<div style="margin-top:10px"><button class="btn sec" data-a="mgmtReload">Try again</button></div></div>';
+  }
+  if (!MGMT_USERS) {
+    $('#app').innerHTML = html + '<div class="card center sm muted">Loading accounts…</div></div>';
+    mgmtLoadUsers();
+    return;
+  }
+
+  var users = MGMT_USERS;
+  var active = users.filter(function (u) { return !u.disabled && !u.pending; });
+  var pending = users.filter(function (u) { return u.pending; });
+  var roles = {}, kitchens = {};
+  users.forEach(function (u) { if (u.pending) return; roles[u.role] = 1; if (u.loc) kitchens[u.loc] = 1; });
+
+  html += mgStatsRow([
+    [users.length, 'Total users', 'var(--ink)'],
+    [active.length, 'Active', 'var(--grn)'],
+    [pending.length, 'Pending', pending.length ? 'var(--org)' : 'var(--mut)'],
+    [Object.keys(roles).length, 'Roles in use', 'var(--blue)'],
+    [Object.keys(kitchens).length, 'Kitchens staffed', 'var(--blue)'],
+    [checklistJobs(null, null).length, 'Services', 'var(--ink)']
+  ]);
+
+  html += '<button class="btn" data-a="addUser" style="margin-top:12px">＋ Add User</button>';
+
+  if (pending.length) {
+    html += '<div class="card" style="background:#fff6e5;border-color:#f0dcb0;margin-top:12px"><b class="sm">' +
+      pending.length + ' sign-up' + (pending.length === 1 ? '' : 's') + ' waiting for you</b>' +
+      '<div class="sm muted" style="margin-top:4px">Approve them and set their role and kitchen.</div>' +
+      '<div style="margin-top:10px"><button class="btn sec" data-a="superDash">Review sign-ups</button></div></div>';
+  }
+
+  html += mgSearchBox(MGMT_Q, 'Name, email, username, role or kitchen');
+  html += mgChips([['all', 'All ' + users.length], ['active', 'Active ' + active.length],
+    ['pending', 'Pending ' + pending.length],
+    ['disabled', 'Disabled ' + users.filter(function (u) { return u.disabled; }).length]], MGMT_FILTER);
+
+  var shown = users.filter(function (u) {
+    if (MGMT_FILTER === 'active' && (u.disabled || u.pending)) return false;
+    if (MGMT_FILTER === 'pending' && !u.pending) return false;
+    if (MGMT_FILTER === 'disabled' && !u.disabled) return false;
+    return mgMatches([u.name, u.email || '', u.uid, ROLES[u.role] ? ROLES[u.role].label : u.role,
+      u.loc ? lname(u.loc) : 'all kitchens']);
+  });
+
+  html += '<div class="sec-t">Accounts · ' + shown.length + (shown.length !== users.length ? ' of ' + users.length : '') + '</div>';
+  html += mgTable(['Name', 'Email', 'Role', 'Restaurant', 'Assigned Jobs', 'Status', 'Actions'],
+    shown.map(function (u) {
+      var st = userStatus(u);
+      var isSuper = ROLES[u.role] && ROLES[u.role].superadmin;
+      var isMe = u.id === ME.id;
+      return '<tr>' +
+        '<td><span class="b">' + h(u.name) + '</span>' +
+        '<div class="xs muted mono">' + h(u.uid) + (isMe ? ' · you' : '') + '</div></td>' +
+        '<td class="sm">' + (u.email ? h(u.email) : '<span class="muted">—</span>') + '</td>' +
+        '<td>' + h(ROLES[u.role] ? ROLES[u.role].label : u.role) + '</td>' +
+        '<td>' + (ROLES[u.role] && ROLES[u.role].all ? '<span class="muted">All ' + LOCATIONS.length + '</span>' : h(lname(u.loc))) + '</td>' +
+        '<td class="sm muted">' + assignedJobsLabel(u) + '</td>' +
+        '<td>' + pill(st.label, st.cls) + '</td>' +
+        '<td class="nowrap">' +
+          (u.pending
+            ? mgBtn('superDash', u.id, '✓', 'Review sign-up', 'background:#e3f4ea;color:var(--grn)')
+            : mgBtn('editUser', u.id, '✏️', 'Edit user') +
+              mgBtn('resetPw', u.id, '🔑', 'Reset password') +
+              (isSuper || isMe ? '' :
+                mgBtn('toggleUser', u.id, u.disabled ? '▶' : '⏸', (u.disabled ? 'Enable' : 'Disable') + ' user') +
+                mgBtn('delUser', u.id, '✕', 'Delete user', 'background:#f6e7e5;color:var(--red)'))) +
+        '</td></tr>';
+    }), MGMT_Q ? 'No account matches “' + MGMT_Q + '”' : 'No accounts');
+
+  html += '<div class="card sm muted" style="margin-top:12px"><b>Assigned Jobs</b> shows what each person can work on today: every service at their kitchen. ' +
+    'Assigning individual services to individual people comes next.</div>';
+
+  $('#app').innerHTML = html + '<div style="height:20px"></div></div>';
+  mgWireSearch(renderUserManagement);
+}
+
+/* ---------- edit a user ----------
+   Role and kitchen are what this form really decides, so "Assign Role" and
+   "Assign Restaurant" are fields here rather than screens of their own. The
+   server refuses the dangerous combinations — moving the Super Admin role,
+   disabling yourself, removing the last account that can manage users — and
+   its message is shown as-is. */
+var EDITU_ERR = '';
+function userEditSheet(id) {
+  var u = (MGMT_USERS || []).filter(function (x) { return x.id === id; })[0];
+  if (!u) { toast('That account is no longer listed'); return; }
+  var isSuper = ROLES[u.role] && ROLES[u.role].superadmin;
+
+  openSheet('Edit User',
+    '<div class="card">' +
+    '<label class="f"><span>Full name</span><input class="inp" id="e_name" value="' + h(u.name) + '" autocomplete="off"></label>' +
+    '<label class="f" style="margin-top:12px"><span>Email</span><input class="inp" id="e_email" type="email" value="' + h(u.email || '') + '" placeholder="name@bookends.in" autocapitalize="none" autocorrect="off" spellcheck="false">' +
+    '<div class="xs muted" style="margin-top:6px">Optional. Signing in still uses the username.</div></label>' +
+    '<label class="f" style="margin-top:12px"><span>Username</span><input class="inp" value="' + h(u.uid) + '" disabled>' +
+    '<div class="xs muted" style="margin-top:6px">A username is never changed — it is what their recorded work is filed under.</div></label>' +
+    '<label class="f" style="margin-top:12px"><span>Role</span><select class="inp" id="e_role"' + (isSuper ? ' disabled' : '') + '>' +
+    (isSuper ? '<option>' + h(ROLES[u.role].label) + '</option>'
+      : assignableRoles().map(function (k) {
+          return '<option value="' + k + '"' + (k === u.role ? ' selected' : '') + '>' + h(ROLES[k].label) + '</option>';
+        }).join('')) +
+    '</select>' + (isSuper ? '<div class="xs muted" style="margin-top:6px">The Super Admin role is moved on the server only.</div>' : '') + '</label>' +
+    '<label class="f" style="margin-top:12px"><span>Restaurant</span><select class="inp" id="e_loc">' +
+    '<option value="">All ' + LOCATIONS.length + ' kitchens</option>' +
+    LOCATIONS.map(function (L) { return '<option value="' + h(L.id) + '"' + (L.id === u.loc ? ' selected' : '') + '>' + h(L.code) + ' ' + h(L.name) + '</option>'; }).join('') +
+    '</select><div class="xs muted" style="margin-top:6px">Ignored for roles that already see all 8 kitchens.</div></label>' +
+    '<label class="f" style="margin-top:12px"><span>Account status</span><select class="inp" id="e_status"' + (isSuper || u.id === ME.id ? ' disabled' : '') + '>' +
+    '<option value="active"' + (u.disabled ? '' : ' selected') + '>Active</option>' +
+    '<option value="disabled"' + (u.disabled ? ' selected' : '') + '>Disabled — cannot sign in</option>' +
+    '</select></label>' +
+    (EDITU_ERR ? '<div class="card" style="background:#fdecea;border-color:#f6c9c4;margin:12px 0 0"><b class="sm">' + h(EDITU_ERR) + '</b></div>' : '') +
+    '</div>' +
+    '<div class="btnrow"><button class="btn sec" data-a="closeSheet">Cancel</button>' +
+    '<button class="btn ok" data-a="saveUserEdit" data-x="' + h(u.id) + '">Save Changes</button></div>');
+}
+
+function saveUserEdit(id) {
+  var u = (MGMT_USERS || []).filter(function (x) { return x.id === id; })[0];
+  if (!u) return;
+  var g = function (k) { var e = document.getElementById(k); return e ? e.value : ''; };
+  var name = g('e_name').replace(/\s+/g, ' ').trim();
+  if (name.length < 2) { EDITU_ERR = 'Enter a full name'; closeSheet(); userEditSheet(id); return; }
+
+  var isSuper = ROLES[u.role] && ROLES[u.role].superadmin;
+  var patch = { name: name, email: g('e_email').trim() };
+  if (!isSuper) {
+    patch.role = g('e_role');
+    patch.loc = ROLES[patch.role] && ROLES[patch.role].all ? null : (g('e_loc') || null);
+    if (u.id !== ME.id) patch.disabled = g('e_status') === 'disabled';
+  }
+
+  Api.patch('/api/admin/users/' + encodeURIComponent(id), patch).then(function (data) {
+    EDITU_ERR = '';
+    var out = data.user;
+    logAct('user', 'Updated ' + out.name + ' (' + out.uid + ') — ' + ROLES[out.role].label + (out.disabled ? ' · disabled' : ''), out.loc);
+    Auth.loadRoster().catch(function () { });
+    closeSheet(); mgmtLoadUsers(true);
+    toast(out.name + ' updated');
+  }, function (err) {
+    EDITU_ERR = err.message || 'Could not save the changes';
+    closeSheet(); userEditSheet(id);
+  });
+}
+
+function toggleUserAsk(id) {
+  var u = (MGMT_USERS || []).filter(function (x) { return x.id === id; })[0];
+  if (!u) return;
+  var off = !u.disabled;
+  askConfirm(off ? 'Disable this user?' : 'Enable this user?',
+    off ? 'Are you sure you want to disable “' + h(u.name) + '”? They will not be able to sign in. Their recorded work is kept.'
+        : 'Let “' + h(u.name) + '” sign in again?',
+    off ? 'Disable' : 'Enable', function (yes) {
+      if (!yes) return;
+      Api.patch('/api/admin/users/' + encodeURIComponent(id), { disabled: off }).then(function (data) {
+        logAct('user', (off ? 'Disabled ' : 'Enabled ') + data.user.name, data.user.loc);
+        mgmtLoadUsers(true);
+        toast(data.user.name + (off ? ' disabled' : ' enabled'));
+      }, function (err) { toast(err.message || 'Could not change the account'); });
+    }, off);
+}
+
+/* ---------------- JOB MANAGEMENT ---------------- */
+
+function jobTypes() { return (DB && DB.jobTypes) || []; }
+function jobTypeById(id) {
+  var t = jobTypes().filter(function (x) { return x.id === id; })[0];
+  return t || null;
+}
+function jobTypeName(id) { var t = jobTypeById(id); return t ? t.name : id; }
+/* Every service under a job type INCLUDING the stopped ones, so the Super
+   Admin can see a stopped service and switch it back on. The live screens use
+   servicesOfType, which leaves stopped ones out. */
+function allServicesOfType(id) {
+  var out = [], seen = {};
+  CLEAN_TEMPLATE.forEach(function (b) {
+    var j = jobFor(b.tk);
+    if (j && (j.jobType || 'cleaning') === id) { seen[b.tk] = 1; out.push(j); }
+  });
+  var ck = (DB && DB.checklist) || {};
+  Object.keys(ck).forEach(function (tk) {
+    var o = ck[tk];
+    if (!o || !o.custom || seen[tk]) return;
+    var j = jobFor(tk);
+    if (j && (j.jobType || 'cleaning') === id) out.push(j);
+  });
+  return out;
+}
+function servicesOfType(id, loc) {
+  return checklistJobs(null, loc).filter(function (j) { return (j.jobType || 'cleaning') === id; });
+}
+
+function renderJobManagement() {
+  var types = jobTypes();
+  var html = mgHead('JOB MANAGEMENT', 'Management · Super Admin', ['mgmtBack', 'Dashboard']);
+
+  var activeT = types.filter(function (t) { return t.active; });
+  html += mgStatsRow([
+    [types.length, 'Job types', 'var(--ink)'],
+    [activeT.length, 'Active', 'var(--grn)'],
+    [checklistJobs(null, null).length, 'Services', 'var(--blue)'],
+    [LOCATIONS.length, 'Restaurants', 'var(--blue)']
+  ]);
+
+  html += '<button class="btn ok" data-a="addJob" style="margin-top:12px">＋ Add Job</button>' +
+    '<button class="btn sec" data-a="addJobType" style="margin-top:8px">＋ Add Job Type</button>';
+
+  html += mgSearchBox(MGMT_Q, 'Job type name or description');
+  html += mgChips([['all', 'All ' + types.length], ['active', 'Active ' + activeT.length],
+    ['inactive', 'Inactive ' + (types.length - activeT.length)]], MGMT_FILTER);
+
+  var shown = types.filter(function (t) {
+    if (MGMT_FILTER === 'active' && !t.active) return false;
+    if (MGMT_FILTER === 'inactive' && t.active) return false;
+    return mgMatches([t.name, t.description || '']);
+  });
+
+  html += '<div class="sec-t">Job types · ' + shown.length + (shown.length !== types.length ? ' of ' + types.length : '') + '</div>';
+  html += mgTable(['Name', 'Description', 'Services', 'Status', 'Actions'],
+    shown.map(function (t) {
+      var n = servicesOfType(t.id, null).length;
+      return '<tr>' +
+        '<td><button class="linkish b" data-a="openType" data-x="' + h(t.id) + '">' + h(t.name) + '</button>' +
+        (t.builtin ? '<div class="xs muted">built in</div>' : '') + '</td>' +
+        '<td class="sm muted">' + (t.description ? h(t.description) : '—') + '</td>' +
+        '<td class="sm">' + n + '</td>' +
+        '<td>' + pill(t.active ? 'ACTIVE' : 'INACTIVE', t.active ? 'p-grn' : 'p-red') + '</td>' +
+        '<td class="nowrap">' +
+          mgBtn('openType', t.id, '📋', 'Open services') +
+          mgBtn('editJobType', t.id, '✏️', 'Edit job type') +
+          mgBtn('toggleJobType', t.id, t.active ? '⏸' : '▶', t.active ? 'Deactivate' : 'Activate') +
+          (t.builtin ? '' : mgBtn('delJobType', t.id, '✕', 'Delete job type', 'background:#f6e7e5;color:var(--red)')) +
+        '</td></tr>';
+    }), MGMT_Q ? 'No job type matches “' + MGMT_Q + '”' : 'No job types yet');
+
+  $('#app').innerHTML = html + '<div style="height:20px"></div></div>';
+  mgWireSearch(renderJobManagement);
+}
+
+/* The services under one job type. For Cleaning these are the checklist jobs
+   the app has always generated; for a type the Super Admin added they are
+   whatever was set up under it. */
+function renderTypeServices() {
+  var t = jobTypeById(S.manageType);
+  if (!t) { S.manage = 'jobs'; render(); return; }
+  var list = allServicesOfType(t.id);
+
+  var html = mgHead(t.name.toUpperCase(), 'Job Management · ' + list.length + ' service' + (list.length === 1 ? '' : 's'),
+    ['mgmtJobsBack', 'Job Management']);
+
+  html += mgStatsRow([
+    [list.length, 'Services', 'var(--ink)'],
+    [list.filter(function (j) { return j.freq === 'W'; }).length, 'Weekly', 'var(--blue)'],
+    [list.filter(function (j) { return j.freq === 'M'; }).length, 'Monthly', 'var(--blue)'],
+    [list.filter(function (j) { return j.freq === 'D'; }).length, 'Daily', 'var(--blue)'],
+    [list.filter(function (j) { return j.assignedTo; }).length, 'Assigned', 'var(--grn)'],
+    [list.filter(function (j) { return !j.assignedTo; }).length, 'Unassigned', 'var(--mut)']
+  ]);
+  if (!t.active) {
+    html += '<div class="card sm" style="background:#fdecea;border-color:#f6c9c4;margin-top:12px"><b>This job type is switched off.</b> ' +
+      'Its services are not scheduled.</div>';
+  }
+  html += '<button class="btn ok" data-a="addJob" data-x="' + h(t.id) + '" style="margin-top:12px">＋ Add Service</button>';
+  html += mgSearchBox(MGMT_Q, 'Service name or area');
+
+  /* Who a job belongs to. The Super Admin gives jobs out here, so the table
+     narrows to one person rather than always showing every service. */
+  var people = (DB.users || []).filter(function (u) { return u.role !== 'auditor'; });
+  html += '<label class="f" style="margin-top:10px"><span>Assigned to</span>' +
+    '<select class="inp" id="mg_who">' +
+    '<option value=""' + (MGMT_WHO === '' ? ' selected' : '') + '>Everyone · all ' + list.length + '</option>' +
+    '<option value="__none"' + (MGMT_WHO === '__none' ? ' selected' : '') + '>Nobody yet · ' + list.filter(function (j) { return !j.assignedTo; }).length + '</option>' +
+    people.map(function (u) {
+      var n = list.filter(function (j) { return j.assignedTo === u.id; }).length;
+      return '<option value="' + h(u.id) + '"' + (MGMT_WHO === u.id ? ' selected' : '') + '>' + h(u.name) +
+        ' · ' + h(ROLES[u.role] ? ROLES[u.role].label : u.role) + ' · ' + n + '</option>';
+    }).join('') + '</select></label>';
+
+  var shown = list.filter(function (j) {
+    if (MGMT_WHO === '__none' && j.assignedTo) return false;
+    if (MGMT_WHO && MGMT_WHO !== '__none' && j.assignedTo !== MGMT_WHO) return false;
+    return mgMatches([j.area, j.zone || '', j.assignedTo ? uname(j.assignedTo) : '']);
+  });
+  html += '<div class="sec-t">Services · ' + shown.length + '</div>';
+  html += mgTable(['Name', 'Area', 'Frequency', 'Restaurant', 'Assigned To', 'Status', 'Actions'],
+    shown.map(function (j) {
+      /* Every detail is editable in place — same mechanism for all of them. */
+      return '<tr>' +
+        '<td>' + cellEdit(j.tk, 'name', j.area, 'b') + (j.custom ? '<div class="xs muted">added</div>' : '') + '</td>' +
+        '<td class="sm">' + cellEdit(j.tk, 'zone', j.zone, 'muted') + '</td>' +
+        '<td class="sm">' + cellEdit(j.tk, 'freq', freqLabel(j.freq)) +
+          (j.freq === 'W' ? '<div class="xs muted">' + cellEdit(j.tk, 'day', j.day == null ? 'Spread across the week' : 'Every ' + DAY_NAMES[j.day]) + '</div>' : '') + '</td>' +
+        '<td class="sm">' + cellEdit(j.tk, 'loc', j.loc ? lname(j.loc) : 'All ' + LOCATIONS.length) + '</td>' +
+        '<td class="sm">' + cellEdit(j.tk, 'assignedTo', j.assignedTo ? uname(j.assignedTo) : 'Anyone on shift', j.assignedTo ? '' : 'muted') +
+          (j.assignedTo && userById(j.assignedTo) ? '<div class="xs muted">' + h(ROLES[userById(j.assignedTo).role] ? ROLES[userById(j.assignedTo).role].label : '') + '</div>' : '') + '</td>' +
+        '<td>' + (canManageClean()
+          ? cellEdit(j.tk, 'status', j.stopped ? 'STOPPED' : 'ACTIVE', j.stopped ? 'pill p-red' : 'pill p-grn')
+          : pill(j.stopped ? 'STOPPED' : 'ACTIVE', j.stopped ? 'p-red' : 'p-grn')) + '</td>' +
+        '<td class="nowrap">' + mgBtn('deleteClean', j.tk, '✕', 'Delete service', 'background:#f6e7e5;color:var(--red)') + '</td>' +
+        '</tr>';
+    }), 'No services under this job type yet');
+
+  html += '<div class="card sm muted" style="margin-top:12px">Double-click any detail — name, area, frequency, schedule, restaurant, who it is assigned to, or status — to edit it in place. ' +
+    'Enter saves, Escape cancels.</div>';
+  $('#app').innerHTML = html + '<div style="height:20px"></div></div>';
+  mgWireSearch(renderTypeServices);
+  var who = document.getElementById('mg_who');
+  if (who) who.addEventListener('change', function () { MGMT_WHO = this.value; renderTypeServices(); });
+}
+
+function freqLabel(f) { return f === 'D' ? 'Daily' : f === 'M' ? 'Monthly' : f === 'W' ? 'Weekly' : 'One time'; }
+
+/* ---------- job type add / edit ---------- */
+var JOBT_ERR = '';
+function jobTypeForm(id) {
+  var t = id ? jobTypeById(id) : null;
+  openSheet(t ? 'Edit Job Type' : 'Add Job Type',
+    '<div class="card">' +
+    '<label class="f"><span>Job Type Name <span style="color:var(--red)">(required)</span></span>' +
+    '<input class="inp" id="jt_name" maxlength="60" value="' + h(t ? t.name : '') + '" placeholder="e.g. Food Safety"></label>' +
+    '<label class="f" style="margin-top:12px"><span>Description</span>' +
+    '<input class="inp" id="jt_desc" maxlength="300" value="' + h(t && t.description ? t.description : '') + '" placeholder="e.g. Daily food safety checks"></label>' +
+    '<label class="f" style="margin-top:12px"><span>Status</span><select class="inp" id="jt_active">' +
+    '<option value="1"' + (!t || t.active ? ' selected' : '') + '>Active</option>' +
+    '<option value="0"' + (t && !t.active ? ' selected' : '') + '>Inactive — not scheduled</option></select></label>' +
+    (JOBT_ERR ? '<div class="card" style="background:#fdecea;border-color:#f6c9c4;margin:12px 0 0"><b class="sm">' + h(JOBT_ERR) + '</b></div>' : '') +
+    '</div>' +
+    (t && t.builtin ? '<div class="card sm muted">Cleaning is built into the app. It can be renamed or switched off, but not removed.</div>' : '') +
+    '<div class="btnrow"><button class="btn sec" data-a="closeSheet">Cancel</button>' +
+    '<button class="btn ok" data-a="saveJobType" data-x="' + h(id || '') + '">' + (t ? 'Save Changes' : 'Add Job Type') + '</button></div>');
+  var n = document.getElementById('jt_name'); if (n) n.focus();
+}
+
+function saveJobType(id) {
+  var g = function (k) { var e = document.getElementById(k); return e ? e.value : ''; };
+  var name = g('jt_name').replace(/\s+/g, ' ').trim();
+  if (!name) { JOBT_ERR = 'Enter a job type name'; closeSheet(); jobTypeForm(id); return; }
+  var body = { name: name, description: g('jt_desc').trim(), active: g('jt_active') === '1' };
+
+  var p = id ? Api.patch('/api/checklist/types/' + encodeURIComponent(id), body)
+             : Api.post('/api/checklist/types', body);
+  p.then(function (res) {
+    JOBT_ERR = '';
+    logAct('user', (id ? 'Job type updated: ' : 'Job type added: ') + name, null);
+    closeSheet();
+    pullJobTypes(function () { S.manage = 'jobs'; render(); });
+    toast(id ? 'Job type updated' : '“' + name + '” added');
+  }, function (err) {
+    JOBT_ERR = err && err.offline ? 'You are offline — this needs a connection' : (err.message || 'Could not save');
+    closeSheet(); jobTypeForm(id);
+  });
+}
+
+function toggleJobType(id) {
+  var t = jobTypeById(id); if (!t) return;
+  Api.patch('/api/checklist/types/' + encodeURIComponent(id), { active: !t.active }).then(function () {
+    pullJobTypes(function () { render(); });
+    toast(t.name + (t.active ? ' deactivated' : ' activated'));
+  }, function (err) { toast(err.message || 'Could not change it'); });
+}
+
+function delJobTypeAsk(id) {
+  var t = jobTypeById(id); if (!t) return;
+  askConfirm('Delete Job Type?',
+    'Are you sure you want to delete “' + h(t.name) + '”? A job type with services cannot be removed — switch it off instead.',
+    'Delete', function (yes) {
+      if (!yes) return;
+      Api.call('DELETE', '/api/checklist/types/' + encodeURIComponent(id), null).then(function () {
+        logAct('user', 'Job type deleted: ' + t.name, null);
+        pullJobTypes(function () { S.manage = 'jobs'; render(); });
+        toast('“' + t.name + '” deleted');
+      }, function (err) { toast(err.message || 'Could not delete'); });
+    }, true);
+}
+
+/* ---------- + Add Job ----------
+   One form for every kind of work. What it creates depends on Frequency:
+     One Time              one job, for that person, on that date
+     Daily / Weekly / Monthly   a service, which keeps generating work
+   That is why Assign To User and Time are carried on the service too. */
+var ADDJOB_ERR = '';
+function addJobForm(presetType) {
+  var types = jobTypes().filter(function (t) { return t.active; });
+  if (!types.length) { toast('Add a job type first'); jobTypeForm(null); return; }
+  var typeId = presetType || (types[0] && types[0].id);
+
+  var roster = (DB.users || []).filter(function (u) { return u.role !== 'auditor'; });
+
+  openSheet('Add Job',
+    '<div class="card">' +
+    '<label class="f"><span>1 · Job Type <span style="color:var(--red)">(required)</span></span>' +
+    '<select class="inp" id="aj_type">' + types.map(function (t) {
+      return '<option value="' + h(t.id) + '"' + (t.id === typeId ? ' selected' : '') + '>' + h(t.name) + '</option>';
+    }).join('') + '</select></label>' +
+
+    '<label class="f" style="margin-top:12px"><span id="aj_namelbl">2 · Job Name <span style="color:var(--red)">(required)</span></span>' +
+    '<select class="inp" id="aj_pick"></select></label>' +
+    '<input class="inp" id="aj_name" maxlength="120" placeholder="New job name" style="margin-top:8px;display:none">' +
+
+    '<label class="f" style="margin-top:12px"><span>3 · Area</span>' +
+    '<input class="inp" id="aj_zone" maxlength="60" placeholder="e.g. Floors"></label>' +
+
+    '<label class="f" style="margin-top:12px"><span>4 · Restaurant</span><select class="inp" id="aj_loc">' +
+    '<option value="">All ' + LOCATIONS.length + ' kitchens</option>' +
+    LOCATIONS.map(function (L) { return '<option value="' + h(L.id) + '">' + h(L.code) + ' ' + h(L.name) + '</option>'; }).join('') +
+    '</select></label>' +
+
+    '<label class="f" style="margin-top:12px"><span>5 · Assign To User</span><select class="inp" id="aj_user">' +
+    '<option value="">Whoever is on shift</option>' +
+    roster.map(function (u) {
+      return '<option value="' + h(u.id) + '" data-loc="' + h(u.loc || '') + '">' + h(u.name) +
+        ' · ' + h(ROLES[u.role] ? ROLES[u.role].label : u.role) +
+        ' · ' + h(u.loc ? lname(u.loc) : 'All kitchens') + '</option>';
+    }).join('') + '</select></label>' +
+
+    '<div class="grid2" style="margin-top:12px">' +
+    '<label class="f"><span>6 · Date</span><input class="inp" id="aj_date" type="date" value="' + ymd(today()) + '"></label>' +
+    '<label class="f"><span>7 · Time</span><input class="inp" id="aj_time" type="time"></label></div>' +
+
+    '<label class="f" style="margin-top:12px"><span>8 · Frequency</span><select class="inp" id="aj_freq">' +
+    '<option value="once">One Time</option><option value="D">Daily</option>' +
+    '<option value="W" selected>Weekly</option><option value="M">Monthly</option></select></label>' +
+
+    '<label class="f" id="aj_daywrap" style="margin-top:12px"><span>9 · Schedule</span>' +
+    '<select class="inp" id="aj_day"><option value="">Spread across the week</option>' +
+    DAY_NAMES.map(function (dn, i) { return '<option value="' + i + '">Every ' + h(dn) + '</option>'; }).join('') + '</select></label>' +
+
+    '<label class="f" id="aj_endwrap" style="margin-top:12px"><span>10 · Due date / End date</span>' +
+    '<input class="inp" id="aj_end" type="date">' +
+    '<div class="xs muted" style="margin-top:6px">Optional. After this date the job stops being scheduled.</div></label>' +
+    (ADDJOB_ERR ? '<div class="card" style="background:#fdecea;border-color:#f6c9c4;margin:12px 0 0"><b class="sm">' + h(ADDJOB_ERR) + '</b></div>' : '') +
+    '</div>' +
+    '<div class="card sm muted" id="aj_hint"></div>' +
+    '<div class="btnrow"><button class="btn sec" data-a="closeSheet">Cancel</button>' +
+    '<button class="btn ok" data-a="saveAddJob">Save Job</button></div>');
+
+  function refreshNames() {
+    var tid = document.getElementById('aj_type').value;
+    var t = jobTypeById(tid);
+    var names = {}, opts = [];
+    servicesOfType(tid, null).forEach(function (j) { if (!names[j.area]) { names[j.area] = 1; opts.push(j.area); } });
+    document.getElementById('aj_namelbl').innerHTML = '2 · ' +
+      (tid === 'cleaning' ? 'Cleaning Name' : h(t ? t.name : 'Job') + ' Name') +
+      ' <span style="color:var(--red)">(required)</span>';
+    document.getElementById('aj_pick').innerHTML =
+      opts.map(function (o) { return '<option value="' + h(o) + '">' + h(o) + '</option>'; }).join('') +
+      '<option value="__new">➕ A new one…</option>';
+    if (!opts.length) document.getElementById('aj_pick').value = '__new';
+    syncNew();
+  }
+  function syncNew() {
+    var isNew = document.getElementById('aj_pick').value === '__new';
+    document.getElementById('aj_name').style.display = isNew ? '' : 'none';
+    if (isNew) document.getElementById('aj_name').focus();
+  }
+  function refreshFreq() {
+    var f = document.getElementById('aj_freq').value;
+    document.getElementById('aj_daywrap').style.display = f === 'W' ? '' : 'none';
+    document.getElementById('aj_endwrap').style.display = f === 'once' ? 'none' : '';
+    document.getElementById('aj_hint').innerHTML = f === 'once'
+      ? 'One job, on that date, for that person. It appears in the cleaning list straight away.'
+      : 'A repeating job. Work is generated ' + (f === 'D' ? 'every day' : f === 'M' ? 'every month' : 'every week') +
+        ' at the chosen restaurant until the end date.';
+  }
+  document.getElementById('aj_type').addEventListener('change', refreshNames);
+  document.getElementById('aj_pick').addEventListener('change', syncNew);
+  document.getElementById('aj_freq').addEventListener('change', refreshFreq);
+  refreshNames(); refreshFreq();
+}
+
+function saveAddJob() {
+  var g = function (k) { var e = document.getElementById(k); return e ? e.value : ''; };
+  var typeId = g('aj_type');
+  var name = (g('aj_pick') === '__new' ? g('aj_name') : g('aj_pick')).replace(/\s+/g, ' ').trim();
+  if (!name) { ADDJOB_ERR = 'Enter a job name'; closeSheet(); addJobForm(typeId); return; }
+
+  var zone = g('aj_zone').replace(/\s+/g, ' ').trim() || jobTypeName(typeId);
+  var loc = g('aj_loc') || null;
+  var user = g('aj_user') || null;
+  var date = g('aj_date') || ymd(today());
+  var time = g('aj_time') || null;
+  var freq = g('aj_freq');
+  var end = g('aj_end') || null;
+
+  if (freq === 'once') {
+    /* A single job, created here and synced like any other. It carries no
+       slot, so nothing about the recurring checklist is touched. */
+    var L = loc ? locById(loc) : null;
+    if (!L) { ADDJOB_ERR = 'Choose a restaurant for a one-time job'; closeSheet(); addJobForm(typeId); return; }
+    var t = {
+      id: 'T-' + L.code + '-once-' + Date.now().toString(36),
+      loc: L.id, period: weekId(parseD(date)), freq: 'W', tk: null,
+      area: name, zone: zone, jobType: typeId,
+      assigned: user, due: date, time: time, status: 'pending',
+      before: null, after: null, approved: null, approvedBy: null, approvedAt: null, reject: '',
+      completedAt: null, completedBy: null, note: '', _u: Date.now()
+    };
+    DB.tasks.push(t);
+    save('tasks', t);
+    logAct('clean', 'Job added: ' + name + ' · ' + fmtD(date), L.id);
+    closeSheet(); S.manage = 'jobs'; render();
+    toast('“' + name + '” added for ' + fmtD(date));
+    return;
+  }
+
+  Api.post('/api/checklist/items', {
+    name: name, zone: zone, freq: freq, jobType: typeId,
+    day: freq === 'W' && g('aj_day') !== '' ? Number(g('aj_day')) : null,
+    loc: loc, assignedTo: user, atTime: time, endDate: end
+  }).then(function (res) {
+    var item = res && res.item;
+    if (!item) { toast('Could not add the job'); return; }
+    ADDJOB_ERR = '';
+    DB.checklist[item.tkey] = item;
+    ensureJobs(); saveLocal();
+    logAct('clean', 'Repeating job added: ' + name, loc);
+    closeSheet(); S.manage = 'jobs'; render();
+    toast('“' + name + '” added');
+  }, function (err) {
+    ADDJOB_ERR = err && err.offline ? 'You are offline — adding a job needs a connection' : (err.message || 'Could not add the job');
+    closeSheet(); addJobForm(typeId);
+  });
+}
+
+/* ---------- pulling the setup down ---------- */
+function pullJobTypes(cb) {
+  if (!Api.token || !DB) { if (cb) cb(); return; }
+  Api.get('/api/checklist/types').then(function (res) {
+    var types = (res && res.types) || [];
+    if (JSON.stringify(types) !== JSON.stringify(DB.jobTypes || [])) {
+      DB.jobTypes = types;
+      saveLocal();
+      if (typeof render === 'function' && ME) render();
+    }
+    if (cb) cb(null);
+  }, function (err) { if (cb) cb(err); });
+}
+
+/* The checklist and the job types travel together: a service is meaningless
+   without the type it belongs to. */
+function pullChecklist(cb) {
+  if (!Api.token || !DB) { if (cb) cb(); return; }
+  Api.get('/api/checklist/items').then(function (res) {
+    var items = res && res.items ? res.items : {};
+    if (JSON.stringify(items) !== JSON.stringify(DB.checklist || {})) {
+      DB.checklist = items;
+      /* A job added on one device has to produce this period's work on every
+         other device too. */
+      ensureJobs();
+      saveLocal();
+      if (typeof render === 'function' && ME) render();
+    }
+    pullJobTypes(cb);
+  }, function (err) { if (cb) cb(err); });
+}
+
 /* ---------------- ROUTER ---------------- */
 function render() {
   if (!ME) { renderLogin(); return; }
   if (ME.mustChange) { renderSetPassword(); return; }
-  if (S.tab !== 'home' && S.tab !== 'rep' && S.loc === 'ALL') S.loc = visibleLocations()[0].id;
-  if (S.tab === 'home') renderHome();
+  /* Keep the selected kitchen honest before anything reads it. A stale 'ALL'
+     left behind by an all-locations account, or an id that no longer matches a
+     kitchen, used to reach locById() as null and take the whole screen down.
+     It matters more now that roles and kitchens are changed from Management. */
+  if (S.loc && S.loc !== 'ALL' && !locById(S.loc)) S.loc = null;
+  if (S.loc === 'ALL' && !perm().all) S.loc = ME.loc || visibleLocations()[0].id;
+  if (S.tab !== 'home' && S.tab !== 'rep' && S.tab !== 'manage' && S.loc === 'ALL') S.loc = visibleLocations()[0].id;
+  if (S.tab === 'manage') renderManage();
+  else if (S.tab === 'home') renderHome();
   else if (S.tab === 'clean') renderClean();
   else if (S.tab === 'exp') renderExpiry();
   else if (S.tab === 'lab') renderLabels();
@@ -3458,6 +4719,15 @@ function render() {
 }
 
 /* ---------------- events ---------------- */
+/* Double-clicking a cleaning name turns it into an input, for the Super Admin
+   only. Everyone else's names are plain text with no data-tk, so nothing here
+   fires for them. */
+document.addEventListener('dblclick', function (ev) {
+  var el = ev.target.closest('.cname[data-tk]'); if (!el) return;
+  ev.preventDefault(); ev.stopPropagation();
+  startInlineEdit(el);
+});
+
 document.addEventListener('click', function (ev) {
   var el = ev.target.closest('[data-a]'); if (!el) return;
   var a = el.getAttribute('data-a'), x = el.getAttribute('data-x') || '';
@@ -3474,6 +4744,31 @@ document.addEventListener('click', function (ev) {
     case 'showForgot': FORGOT_ERR = ''; LOGIN_UID = (document.getElementById('l_uid') || {}).value || LOGIN_UID; renderForgot(); break;
     case 'doForgot': doForgot(); break;
     case 'superDash': if (!perm().superadmin) break; closeSheet(); superSheet(); break;
+    /* Only the nav changes, so redraw just that — no need to rebuild the screen. */
+    case 'mgmtMenu': if (!perm().superadmin) break; MGMT_MENU = !MGMT_MENU; tabbar(); break;
+    case 'mgmtBack': S.tab = 'home'; render(); break;
+    case 'mgmtOpen': {
+      if (!perm().superadmin) break;
+      closeSheet();   /* the section stays expanded, so coming back shows it open */
+      S.tab = 'manage'; S.manage = x; MGMT_Q = ''; MGMT_FILTER = 'all';
+      render();
+      if (x === 'users') mgmtLoadUsers(true); else pullJobTypes();
+      break;
+    }
+    case 'mgmtJobsBack': S.manage = 'jobs'; MGMT_Q = ''; MGMT_FILTER = 'all'; render(); break;
+    case 'mgFilter': MGMT_FILTER = x; render(); break;
+    case 'openType': if (!perm().superadmin) break; S.manage = 'type'; S.manageType = x; MGMT_Q = ''; MGMT_WHO = ''; render(); break;
+    case 'addJobType': if (!perm().superadmin) break; JOBT_ERR = ''; closeSheet(); jobTypeForm(null); break;
+    case 'editJobType': if (!perm().superadmin) break; JOBT_ERR = ''; closeSheet(); jobTypeForm(x); break;
+    case 'saveJobType': saveJobType(x || null); break;
+    case 'toggleJobType': if (!perm().superadmin) break; toggleJobType(x); break;
+    case 'delJobType': if (!perm().superadmin) break; delJobTypeAsk(x); break;
+    case 'addJob': if (!perm().superadmin) break; ADDJOB_ERR = ''; closeSheet(); addJobForm(x || null); break;
+    case 'saveAddJob': saveAddJob(); break;
+    case 'mgmtReload': MGMT_ERR = ''; mgmtLoadUsers(true); render(); break;
+    case 'editUser': if (!perm().superadmin) break; EDITU_ERR = ''; closeSheet(); userEditSheet(x); break;
+    case 'saveUserEdit': saveUserEdit(x); break;
+    case 'toggleUser': if (!perm().superadmin) break; toggleUserAsk(x); break;
     case 'setPwFor': setPasswordFor(x, el.getAttribute('data-n') || 'this person'); break;
     case 'dismissReset': {
       var dn = el.getAttribute('data-n') || 'this request';
@@ -3545,7 +4840,7 @@ document.addEventListener('click', function (ev) {
     case 'reset':
       askConfirm('Reset this device?', 'Everything stored on this phone is wiped and you are signed out. If cloud sync is on, your data comes back next time you sign in.', 'Reset', function () { resetAll(); }, true);
       break;
-    case 'tab': closeSheet(); S.tab = x; render(); break;
+    case 'tab': closeSheet(); if (x === 'manage' && S.tab !== 'manage') S.manage = 'home'; S.tab = x; render(); break;
     case 'alerts': closeSheet(); alertsSheet(); break;
     case 'me': closeSheet(); meSheet(); break;
     case 'users': closeSheet(); usersSheet(); break;
@@ -3584,6 +4879,14 @@ document.addEventListener('click', function (ev) {
       break;
     }
     case 'checklist': closeSheet(); checklistSheet(); break;
+    /* Swallows a single click on a cleaning name, so the first click of a
+       double-click does not open the job underneath it. */
+    case 'cnameHint': ev.stopPropagation(); break;
+    case 'deleteClean': ev.stopPropagation(); deleteCleanAsk(x); break;
+    case 'restoreClean': ev.stopPropagation(); restoreClean(x); break;
+    case 'addClean': closeSheet(); cleanForm(); break;
+    case 'saveClean': saveClean(); break;
+    case 'renameHistory': closeSheet(); renameHistorySheet(); break;
     case 'closeSheet': case 'closeSheetBg': stopScan(); closeSheet(); break;
     case 'readAll': buildAlerts().forEach(function (al) { DB.read[al.id] = 1; }); save(); closeSheet(); render(); break;
     case 'goAlert': {
@@ -3613,7 +4916,7 @@ document.addEventListener('click', function (ev) {
     case 'scanGo': handleScan(document.getElementById('scanmanual').value); break;
     case 'shoot': {
       var t2 = T(x);
-      capture(function (data) { setPhoto(t2, 'before', data); logAct('photo', 'photo added: ' + t2.area, t2.loc); taskSheet(t2.id); toast('Photo saved'); });
+      capture(function (data) { setPhoto(t2, 'before', data); logAct('photo', 'photo added: ' + cleanName(t2), t2.loc); taskSheet(t2.id); toast('Photo saved'); });
       break;
     }
     case 'unshoot': { ev.stopPropagation(); var t3 = T(x); t3.before = null; t3.after = null; save('tasks', t3); taskSheet(t3.id); break; }
@@ -3622,14 +4925,18 @@ document.addEventListener('click', function (ev) {
       var t4 = T(x);
       if (!t4.before && !t4.after) { toast('A photo is compulsory'); break; }
       t4.status = 'completed'; t4.completedAt = Date.now(); t4.completedBy = ME.id; t4.approved = null; t4.reject = '';
-      save('tasks', t4); logAct('clean', 'Completed: ' + t4.area, t4.loc); taskSheet(t4.id); toast('Sent for approval'); break;
+      save('tasks', t4); logAct('clean', 'Completed: ' + cleanName(t4), t4.loc); taskSheet(t4.id); toast('Sent for approval'); break;
     }
-    case 'approve': { var t5 = T(x); t5.status = 'completed'; t5.approved = true; t5.approvedBy = ME.id; t5.approvedAt = Date.now(); t5.reject = ''; save('tasks', t5); logAct('approve', 'Approved: ' + t5.area, t5.loc); closeSheet(); render(); toast('Approved ✓'); break; }
+    case 'approve': { var t5 = T(x); t5.status = 'completed'; t5.approved = true; t5.approvedBy = ME.id; t5.approvedAt = Date.now(); t5.reject = ''; save('tasks', t5); logAct('approve', 'Approved: ' + cleanName(t5), t5.loc); closeSheet(); render(); toast('Approved ✓'); break; }
     case 'rejectAsk': {
       askText('Reject this job', 'The person who did it will see this reason.', 'Area re-do required', 'What was wrong?', 'Reject', function (reason) {
         if (reason === null) return;
         var t6 = T(x); t6.status = 'rejected'; t6.approved = false; t6.approvedBy = ME.id; t6.approvedAt = Date.now(); t6.reject = reason || 'Rejected';
-        save('tasks', t6); logAct('reject', 'Rejected: ' + t6.area, t6.loc); closeSheet(); render(); toast('Rejected — team notified');
+        /* The rejected photo is cleared: the job has to be done again, so the
+           evidence has to be taken again. Without this the team could send the
+           very same photo straight back for approval. */
+        t6.before = null; t6.after = null;
+        save('tasks', t6); logAct('reject', 'Rejected: ' + cleanName(t6), t6.loc); closeSheet(); render(); toast('Rejected — team notified');
       });
       break;
     }

@@ -134,6 +134,7 @@ app.use('/api/auth', require('./routes/authRoutes'));
 app.use('/api/users', require('./routes/userRoutes'));
 app.use('/api/admin', require('./routes/adminRoutes'));
 app.use('/api/sync', require('./routes/syncRoutes'));
+app.use('/api/checklist', require('./routes/checklistRoutes'));
 app.use('/api/photos', require('./routes/photoRoutes'));
 app.use('/api/cron', require('./routes/cronRoutes'));
 

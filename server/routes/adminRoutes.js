@@ -54,6 +54,7 @@ function adminUser(user) {
     name: user.name,
     role: user.role,
     loc: user.loc,
+    email: user.email || null,
     mustChange: user.mustChange,
     firstLogin: user.firstLogin,
     lastLogin: user.lastLogin,
@@ -137,6 +138,8 @@ router.post('/users', validate.validateCreateUser, asyncHandler(function (req, r
             loc: input.loc,
             passwordHash: passwordHash,
             mustChange: true,          // forced to choose their own on first sign-in
+            disabled: input.disabled,
+            email: input.email,
             createdBy: req.auth.id
           });
         });

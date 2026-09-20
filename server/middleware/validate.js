@@ -38,6 +38,17 @@ function str(value, label, opts) {
 /* Login IDs are lower-case letters and digits only — the rule the database
    CHECK constraint also enforces, so an invalid one is caught here with a
    friendly message rather than as a constraint violation. */
+/* A contact address. Optional everywhere, and never used to sign in, so the
+   check is deliberately loose: something@something.something, no more. An
+   empty value clears it rather than failing. */
+function email(value, label) {
+  if (value === undefined || value === null || String(value).trim() === '') return { ok: true, value: null };
+  var v = String(value).trim();
+  if (v.length > 120) return { ok: false, error: label + ' must be 120 characters or fewer' };
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(v)) return { ok: false, error: 'Enter a valid email address, or leave it blank' };
+  return { ok: true, value: v.toLowerCase() };
+}
+
 function uid(value, label) {
   var s = str(value, label || 'User ID', { max: 32 });
   if (!s.ok) return s;
@@ -188,12 +199,25 @@ function validateCreateUser(req, res, next) {
     if (!pw.ok) return fail(res, pw.error);
   }
 
+  /* An account may be created already switched off, for someone who starts
+     later. Absent means active, which is how every existing caller behaves. */
+  var dis = { ok: true, value: false };
+  if (body.disabled !== undefined) {
+    dis = bool(body.disabled, 'Disabled');
+    if (!dis.ok) return fail(res, dis.error);
+  }
+
+  var em = email(body.email, 'Email');
+  if (!em.ok) return fail(res, em.error);
+
   req.valid = {
     name: name.value,
     uid: u.value,
     role: r.value,
     loc: loc.value || null,
-    password: pw.value
+    password: pw.value,
+    disabled: dis.value,
+    email: em.value
   };
   next();
 }
@@ -216,6 +240,11 @@ function validateUpdateUser(req, res, next) {
     var loc = str(body.loc, 'Location', { optional: true, max: 40 });
     if (!loc.ok) return fail(res, loc.error);
     out.loc = loc.value || null;
+  }
+  if (body.email !== undefined) {
+    var em2 = email(body.email, 'Email');
+    if (!em2.ok) return fail(res, em2.error);
+    out.email = em2.value;
   }
   if (body.disabled !== undefined) {
     var d = bool(body.disabled, 'Disabled');
