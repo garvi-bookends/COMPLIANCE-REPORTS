@@ -1362,13 +1362,33 @@ function logAct(type, text, loc) { DB.log.unshift({ t: Date.now(), type: type, t
 /* ---------------- compliance maths ---------------- */
 /* Everything due at a location "right now": this week's weekly jobs + this month's heavy jobs.
    Pass freq 'W' or 'M' to get just one of the two. */
+/* ---------- job type of recorded work ----------
+   The Cleaning section shows cleaning and nothing else: a Food Safety or
+   Labelling job belongs to its own section, not this one. A task records its
+   type when it is generated; work recorded before job types existed carries
+   none and was all cleaning, so that is the fallback. */
+var CLEANING_TYPE = 'cleaning';
+function taskJobType(t) {
+  if (t.jobType) return t.jobType;
+  var j = jobFor(tkeyOf(t));
+  return (j && j.jobType) || CLEANING_TYPE;
+}
+function isCleaningService(j) { return (j.jobType || CLEANING_TYPE) === CLEANING_TYPE; }
+/* The checklist entries belonging to one job type — cleaning unless asked. */
+function servicesForType(freq, loc, type) {
+  type = type || CLEANING_TYPE;
+  return checklistJobs(freq, loc).filter(function (j) { return (j.jobType || CLEANING_TYPE) === type; });
+}
+
 /* The live view of a kitchen's work. A stopped job is left out: it is gone
    from the cleaning list, the dashboards and the alerts. What was already
    recorded against it is still there — see tasksForAudit. */
-function tasksFor(loc, wk, freq) {
+function tasksFor(loc, wk, freq, type) {
   var mid = wk ? monthOfWeek(wk) : null;
+  var want = type || CLEANING_TYPE;
   return DB.tasks.filter(function (t) {
     if (t.loc !== loc) return false;
+    if (taskJobType(t) !== want) return false;
     if (jobStopped(tkeyOf(t))) return false;
     if (freq && t.freq !== freq) return false;
     if (!wk) return true;
@@ -1397,9 +1417,11 @@ function cleaningStats(loc, wk, freq) {
 }
 /* Same as tasksFor/cleaningStats but filtered by an arbitrary from/to due-date
    range instead of a fixed ISO week/month bucket. */
-function tasksInRange(loc, from, to, freq) {
+function tasksInRange(loc, from, to, freq, type) {
+  var want = type || CLEANING_TYPE;
   return DB.tasks.filter(function (t) {
     if (t.loc !== loc) return false;
+    if (taskJobType(t) !== want) return false;
     if (jobStopped(tkeyOf(t))) return false;
     if (freq && t.freq !== freq) return false;
     return t.due >= from && t.due <= to;
@@ -2709,7 +2731,7 @@ function tuesdayCard(scope, wk) {
 
   var out = '<div class="sec-t">Cleaning · every Tuesday</div><div class="card pad0">';
   if (!total) {
-    out += '<div class="sm muted" style="padding:12px 14px">' + pinnedJobs(scope || null).filter(function (j) { return j.day === 1; }).map(function (j) { return h(j.area.split(' — ')[0]); }).join(' · ') +
+    out += '<div class="sm muted" style="padding:12px 14px">' + servicesForType(null, scope || null).filter(function (j) { return j.day === 1; }).map(function (j) { return h(j.area.split(' — ')[0]); }).join(' · ') +
       '<div class="xs" style="margin-top:6px">Nothing due this week.' +
       '</div></div>';
   } else if (scope) {
@@ -2837,7 +2859,7 @@ function aboutSheet() {
     '<div class="sm muted">Version ' + APP_VERSION + '</div></div>' +
     '<div class="card">' +
     kv('Locations', LOCATIONS.length + ' across Surat &amp; Ahmedabad') +
-    '<div style="height:10px"></div>' + kv('Cleaning jobs', weeklyJobs(null).length + ' weekly · ' + monthlyJobs(null).length + ' monthly') +
+    '<div style="height:10px"></div>' + kv('Cleaning jobs', servicesForType('W', null).length + ' weekly · ' + servicesForType('M', null).length + ' monthly') +
     '<div style="height:10px"></div>' + kv('People', DB.users.length) +
     '<div style="height:10px"></div>' + kv('Products tracked', DB.products.length) +
     '<div style="height:10px"></div>' + kv('Cloud sync', Cloud.label()) +
@@ -2927,7 +2949,7 @@ function renderClean() {
   /* ---- every-Tuesday jobs, kept together in their own section ---- */
   if (f !== 'tuesday') {
     var tueDone = tue.filter(function (t) { return t.status === 'completed'; }).length;
-    var pinned = pinnedJobs(loc).filter(function (j) { return j.day === 1; });
+    var pinned = servicesForType(null, loc).filter(function (j) { return j.day === 1; });
     html += '<div class="sec-t">Every Tuesday · ' + pinned.length + ' job' + (pinned.length === 1 ? '' : 's') + '</div><div class="card pad0">' +
       (tue.length
         ? '<div class="xs muted b" style="padding:10px 14px 4px">' + tueDone + ' of ' + tue.length + ' done · week of ' + h(fmtD(tueFrom)) + ' – ' + h(fmtD(tueTo)) + '</div>' + tue.map(taskRow).join('')
@@ -3442,10 +3464,12 @@ function staffStats(scope, weeks) {
 /* Like tasksFor, but INCLUDING jobs that have since been stopped. Deleting a
    cleaning job stops it being done; it does not unmake the cleaning that was
    already done, photographed and approved. The evidence stays reachable. */
-function tasksForAudit(loc, wk) {
+function tasksForAudit(loc, wk, type) {
   var mid = wk ? monthOfWeek(wk) : null;
+  var want = type || CLEANING_TYPE;
   return DB.tasks.filter(function (t) {
     if (t.loc !== loc) return false;
+    if (taskJobType(t) !== want) return false;
     if (!wk) return true;
     return t.freq === 'M' ? t.period === mid : t.period === wk;
   });
@@ -3807,13 +3831,13 @@ function saveUser() {
 }
 function checklistSheet() {
   var body = '<div class="card sm"><b>All-electric kitchens.</b> <span class="muted">No gas appliances anywhere in the group, so the checklist covers induction hobs, electric combi ovens, griddles, fryers and salamanders — plus a weekly electrical-safety wipe-down (dry cloth only around plug points).</span></div>' +
-    '<div class="card sm muted">' + weeklyJobs(null).length + ' weekly jobs are generated every Monday and ' + monthlyJobs(null).length +
+    '<div class="card sm muted">' + servicesForType('W', null).length + ' weekly jobs are generated every Monday and ' + servicesForType('M', null).length +
     ' heavy jobs on the 1st of each month — for all 8 locations.</div>';
   if (canManageClean()) {
     body += '<button class="btn ok" data-a="addClean">＋ Add Cleaning</button>' +
       '<div class="card sm muted" style="margin-top:10px">Double-click a cleaning name to rename it. A rename or a delete applies at every kitchen.</div>';
   }
-  [['Every week', weeklyJobs(null)], ['Once a month', monthlyJobs(null)]].forEach(function (grp) {
+  [['Every week', servicesForType('W', null)], ['Once a month', servicesForType('M', null)]].forEach(function (grp) {
     var zones = {}, order = [];
     grp[1].forEach(function (t) { if (!zones[t.zone]) { zones[t.zone] = []; order.push(t.zone); } zones[t.zone].push(t); });
     body += '<div class="sec-t">' + grp[0] + ' · ' + grp[1].length + ' jobs</div>';
