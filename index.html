@@ -2988,6 +2988,7 @@ function renderClean() {
   }).join('') : '<div class="card"><div class="empty"><div class="ic">🧼</div>Nothing here</div></div>';
   html += '<div style="height:20px"></div></div>';
   $('#app').innerHTML = html;
+  if (canManageClean()) $('#app').insertAdjacentHTML('beforeend', '<button class="fab" data-a="addClean">＋ Add Cleaning</button>');
   tabbar();
 }
 function recentWeeks(n) {
