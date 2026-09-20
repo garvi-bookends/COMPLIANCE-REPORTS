@@ -4382,8 +4382,8 @@ function renderJobManagement() {
     [LOCATIONS.length, 'Restaurants', 'var(--blue)']
   ]);
 
-  html += '<button class="btn ok" data-a="addJob" style="margin-top:12px">＋ Add Job</button>' +
-    '<button class="btn sec" data-a="addJobType" style="margin-top:8px">＋ Add Job Type</button>';
+  html += '<button class="btn" data-a="addJobType" style="margin-top:12px">＋ Add Job Type</button>' +
+    '<div class="card sm muted" style="margin-top:10px">Open a job type below to add jobs to it.</div>';
 
   html += mgSearchBox(MGMT_Q, 'Job type name or description');
   html += mgChips([['all', 'All ' + types.length], ['active', 'Active ' + activeT.length],
@@ -4571,24 +4571,23 @@ function addJobForm(presetType) {
 
   openSheet('Add Job',
     '<div class="card">' +
-    '<label class="f"><span>1 · Job Type <span style="color:var(--red)">(required)</span></span>' +
-    '<select class="inp" id="aj_type">' + types.map(function (t) {
-      return '<option value="' + h(t.id) + '"' + (t.id === typeId ? ' selected' : '') + '>' + h(t.name) + '</option>';
-    }).join('') + '</select></label>' +
+    '<input type="hidden" id="aj_type" value="' + h(typeId) + '">' +
+    '<div class="xs muted b" style="text-transform:uppercase;letter-spacing:.5px">Job type</div>' +
+    '<div class="b" style="font-size:16px;margin-bottom:4px">' + h(jobTypeName(typeId)) + '</div>' +
 
-    '<label class="f" style="margin-top:12px"><span id="aj_namelbl">2 · Job Name <span style="color:var(--red)">(required)</span></span>' +
+    '<label class="f" style="margin-top:12px"><span id="aj_namelbl">1 · Job Name <span style="color:var(--red)">(required)</span></span>' +
     '<select class="inp" id="aj_pick"></select></label>' +
     '<input class="inp" id="aj_name" maxlength="120" placeholder="New job name" style="margin-top:8px;display:none">' +
 
-    '<label class="f" style="margin-top:12px"><span>3 · Area</span>' +
+    '<label class="f" style="margin-top:12px"><span>2 · Area</span>' +
     '<input class="inp" id="aj_zone" maxlength="60" placeholder="e.g. Floors"></label>' +
 
-    '<label class="f" style="margin-top:12px"><span>4 · Restaurant</span><select class="inp" id="aj_loc">' +
+    '<label class="f" style="margin-top:12px"><span>3 · Restaurant</span><select class="inp" id="aj_loc">' +
     '<option value="">All ' + LOCATIONS.length + ' kitchens</option>' +
     LOCATIONS.map(function (L) { return '<option value="' + h(L.id) + '">' + h(L.code) + ' ' + h(L.name) + '</option>'; }).join('') +
     '</select></label>' +
 
-    '<label class="f" style="margin-top:12px"><span>5 · Assign To User</span><select class="inp" id="aj_user">' +
+    '<label class="f" style="margin-top:12px"><span>4 · Assign To User</span><select class="inp" id="aj_user">' +
     '<option value="">Whoever is on shift</option>' +
     roster.map(function (u) {
       return '<option value="' + h(u.id) + '" data-loc="' + h(u.loc || '') + '">' + h(u.name) +
@@ -4597,18 +4596,18 @@ function addJobForm(presetType) {
     }).join('') + '</select></label>' +
 
     '<div class="grid2" style="margin-top:12px">' +
-    '<label class="f"><span>6 · Date</span><input class="inp" id="aj_date" type="date" value="' + ymd(today()) + '"></label>' +
-    '<label class="f"><span>7 · Time</span><input class="inp" id="aj_time" type="time"></label></div>' +
+    '<label class="f"><span>5 · Date</span><input class="inp" id="aj_date" type="date" value="' + ymd(today()) + '"></label>' +
+    '<label class="f"><span>6 · Time</span><input class="inp" id="aj_time" type="time"></label></div>' +
 
-    '<label class="f" style="margin-top:12px"><span>8 · Frequency</span><select class="inp" id="aj_freq">' +
+    '<label class="f" style="margin-top:12px"><span>7 · Frequency</span><select class="inp" id="aj_freq">' +
     '<option value="once">One Time</option><option value="D">Daily</option>' +
     '<option value="W" selected>Weekly</option><option value="M">Monthly</option></select></label>' +
 
-    '<label class="f" id="aj_daywrap" style="margin-top:12px"><span>9 · Schedule</span>' +
+    '<label class="f" id="aj_daywrap" style="margin-top:12px"><span>8 · Schedule</span>' +
     '<select class="inp" id="aj_day"><option value="">Spread across the week</option>' +
     DAY_NAMES.map(function (dn, i) { return '<option value="' + i + '">Every ' + h(dn) + '</option>'; }).join('') + '</select></label>' +
 
-    '<label class="f" id="aj_endwrap" style="margin-top:12px"><span>10 · Due date / End date</span>' +
+    '<label class="f" id="aj_endwrap" style="margin-top:12px"><span>9 · Due date / End date</span>' +
     '<input class="inp" id="aj_end" type="date">' +
     '<div class="xs muted" style="margin-top:6px">Optional. After this date the job stops being scheduled.</div></label>' +
     (ADDJOB_ERR ? '<div class="card" style="background:#fdecea;border-color:#f6c9c4;margin:12px 0 0"><b class="sm">' + h(ADDJOB_ERR) + '</b></div>' : '') +
@@ -4622,7 +4621,7 @@ function addJobForm(presetType) {
     var t = jobTypeById(tid);
     var names = {}, opts = [];
     servicesOfType(tid, null).forEach(function (j) { if (!names[j.area]) { names[j.area] = 1; opts.push(j.area); } });
-    document.getElementById('aj_namelbl').innerHTML = '2 · ' +
+    document.getElementById('aj_namelbl').innerHTML = '1 · ' +
       (tid === 'cleaning' ? 'Cleaning Name' : h(t ? t.name : 'Job') + ' Name') +
       ' <span style="color:var(--red)">(required)</span>';
     document.getElementById('aj_pick').innerHTML =
@@ -4645,7 +4644,6 @@ function addJobForm(presetType) {
       : 'A repeating job. Work is generated ' + (f === 'D' ? 'every day' : f === 'M' ? 'every month' : 'every week') +
         ' at the chosen restaurant until the end date.';
   }
-  document.getElementById('aj_type').addEventListener('change', refreshNames);
   document.getElementById('aj_pick').addEventListener('change', syncNew);
   document.getElementById('aj_freq').addEventListener('change', refreshFreq);
   refreshNames(); refreshFreq();
@@ -4803,7 +4801,12 @@ document.addEventListener('click', function (ev) {
     case 'saveJobType': saveJobType(x || null); break;
     case 'toggleJobType': if (!perm().superadmin) break; toggleJobType(x); break;
     case 'delJobType': if (!perm().superadmin) break; delJobTypeAsk(x); break;
-    case 'addJob': if (!perm().superadmin) break; ADDJOB_ERR = ''; closeSheet(); addJobForm(x || null); break;
+    case 'addJob': {
+      if (!perm().superadmin) break;
+      if (!x) { toast('Open a job type first'); break; }
+      ADDJOB_ERR = ''; closeSheet(); addJobForm(x);
+      break;
+    }
     case 'saveAddJob': saveAddJob(); break;
     case 'mgmtReload': MGMT_ERR = ''; mgmtLoadUsers(true); render(); break;
     case 'editUser': if (!perm().superadmin) break; EDITU_ERR = ''; closeSheet(); userEditSheet(x); break;
