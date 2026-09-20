@@ -182,7 +182,7 @@ create table if not exists bk_checklist (
   zone       text,                                    -- added jobs only: which area of the kitchen
   freq       text,                                    -- added jobs only: 'W' weekly or 'M' monthly
   day        integer,                                 -- fixed weekday, 0 = Monday. null = spread across the week
-  loc        text,                                    -- added jobs only. null = every kitchen
+  loc        text,                                    -- superseded by locs below; kept so an older app still round-trips
   custom     boolean     not null default false,
   deleted    boolean     not null default false,
   prev_name  text,
@@ -276,6 +276,20 @@ create index if not exists bk_checklist_type on bk_checklist (job_type);
 -- written for some other reason — a rename, say — does not switch a built-in
 -- job on by accident.
 alter table bk_checklist add column if not exists enabled boolean not null default false;
+
+-- The outlets a job runs at, as a list of location ids. A job belongs to the
+-- kitchens that were ticked for it and to no others.
+--
+-- null means "every kitchen", which is what every job created before this
+-- column existed meant. Those are left running and flagged in Job Management
+-- so they can be given outlets deliberately rather than being changed under
+-- someone's feet. A job created from now on always names its outlets.
+--
+-- `loc` above held a single outlet and is backfilled into here; it is no
+-- longer read, only written alongside, so an app still running the previous
+-- version does not lose the value.
+alter table bk_checklist add column if not exists locs jsonb;
+update bk_checklist set locs = to_jsonb(array[loc]) where loc is not null and locs is null;
 
 alter table bk_checklist add column if not exists assigned_to text;
 alter table bk_checklist add column if not exists at_time    text;

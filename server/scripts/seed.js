@@ -20,19 +20,10 @@ var config = require('../config/env');
 var userModel = require('../models/userModel');
 var passwords = require('../services/passwordService');
 
-/* Mirrors LOCATIONS in index.html. Kept here rather than imported because the
-   frontend is a single static file with no module exports; if you add a
-   location there, add it here too. */
-var LOCATIONS = [
-  { id: 'SUR-PREP',    code: 'SPK', head: 'Rahul' },
-  { id: 'SUR-CAP-PIP', code: 'CPP', head: 'Amisha' },
-  { id: 'SUR-CAP-VES', code: 'CPV', head: 'Rahil' },
-  { id: 'SUR-AIKO',    code: 'AKP', head: 'Harish' },
-  { id: 'AHM-PREP',    code: 'APK', head: 'Raju' },
-  { id: 'AHM-CAP-AMB', code: 'CPA', head: 'Pankaj' },
-  { id: 'AHM-CAP-UNI', code: 'CPU', head: 'Atul' },
-  { id: 'AHM-AIKO',    code: 'AKA', head: 'Akshay' }
-];
+/* Mirrors LOCATIONS in index.html. The frontend is a single static file with
+   no module exports, so the backend keeps its own copy — now in one place,
+   shared with whatever else needs to check a location. */
+var LOCATIONS = require('../config/locations').LOCATIONS;
 
 var HEAD_OFFICE = [
   { id: 'U-HK',  name: 'Husen Khan', role: 'exec'  },

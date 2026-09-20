@@ -56,6 +56,33 @@ function tidy(v) {
   return String(v == null ? '' : v).replace(/\s+/g, ' ').trim();
 }
 
+var LOC_IDS = require('../config/locations').IDS;
+
+/* The outlets a job runs at. Checked against the real list, so a typo cannot
+   create a job that quietly runs nowhere.
+
+   The result is de-duplicated and put back in LOCATIONS order. That ordering
+   matters more than it looks: the app decides whether to redraw by comparing
+   the whole checklist with JSON.stringify, so an unstable order would look
+   like a change on every poll and wipe out whatever was being edited. */
+function parseLocs(v) {
+  if (!Array.isArray(v)) return { error: 'Choose at least one restaurant' };
+  var want = {};
+  for (var i = 0; i < v.length; i++) {
+    var id = String(v[i] == null ? '' : v[i]).trim();
+    if (LOC_IDS.indexOf(id) === -1) return { error: 'Unknown restaurant' };
+    want[id] = 1;
+  }
+  var out = LOC_IDS.filter(function (id) { return want[id]; });
+  if (!out.length) return { error: 'Choose at least one restaurant' };
+  return { value: out };
+}
+/* `loc` is no longer read by the app, but a job at exactly one outlet still
+   writes it, so a device still running the previous version reads that job
+   correctly. A job at several reads there as "every kitchen" — too many rather
+   than too few, which is the safe direction to be wrong. */
+function locScalar(locs) { return locs && locs.length === 1 ? locs[0] : null; }
+
 function superadminOnly(req, res, next) {
   if (req.auth.role !== 'superadmin') {
     return res.status(403).json({
@@ -82,6 +109,9 @@ function rowToItem(x) {
     freq: x.freq,
     day: x.day,
     loc: x.loc,
+    /* The outlets this job runs at. null means every kitchen, which is what
+       jobs created before outlets were chosen individually still mean. */
+    locs: Array.isArray(x.locs) && x.locs.length ? x.locs : null,
     custom: x.custom,
     enabled: x.enabled === true,
     deleted: x.deleted,
@@ -173,7 +203,13 @@ router.post('/items', superadminOnly, asyncHandler(function (req, res) {
     if (!isFinite(day) || day < 0 || day > 6 || Math.floor(day) !== day) return badRequest(res, 'Choose a valid day');
   }
 
-  var loc = body.loc === null || body.loc === undefined || body.loc === '' ? null : String(body.loc).slice(0, 40);
+  /* The outlets this job runs at. A job added from now on always names them;
+     `loc` from an older caller is read as a one-outlet set. */
+  var locsIn = Array.isArray(body.locs) ? body.locs : (body.loc ? [body.loc] : null);
+  if (!locsIn) return badRequest(res, 'Choose at least one restaurant');
+  var parsed = parseLocs(locsIn);
+  if (parsed.error) return badRequest(res, parsed.error);
+  var locs = parsed.value, loc = locScalar(locs);
 
   /* Which job type this service belongs to. Cleaning when nothing is said, so
      every existing caller keeps working. */
@@ -206,9 +242,9 @@ router.post('/items', superadminOnly, asyncHandler(function (req, res) {
       }
       var tkey = freq + next;
       return client.query(
-        'insert into bk_checklist (tkey, name, zone, freq, day, loc, job_type, assigned_to, at_time, end_date, custom, enabled, created_by, created_at, updated_at) ' +
-        'values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, true, true, $11, now(), now())',
-        [tkey, name, zone, freq, day, loc, jobType, assignedTo, atTime || null, endDate || null, req.auth.id]
+        'insert into bk_checklist (tkey, name, zone, freq, day, loc, locs, job_type, assigned_to, at_time, end_date, custom, enabled, created_by, created_at, updated_at) ' +
+        'values ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10, $11, true, true, $12, now(), now())',
+        [tkey, name, zone, freq, day, loc, JSON.stringify(locs), jobType, assignedTo, atTime || null, endDate || null, req.auth.id]
       ).then(function () {
         return audit(client, 'add', tkey, null, name, req.auth);
       }).then(function () {
@@ -276,8 +312,16 @@ router.patch('/items/:tkey', superadminOnly, asyncHandler(function (req, res) {
       else patch.day = day;
     }
   }
-  if (!err && has('loc')) {
-    patch.loc = body.loc === null || body.loc === '' || body.loc === undefined ? null : String(body.loc).slice(0, 40);
+  /* Outlets. There is no way back to "every kitchen" by accident: an empty set
+     is refused, so a job only runs everywhere while nobody has chosen yet. */
+  if (!err && has('locs')) {
+    var pl = parseLocs(body.locs);
+    if (pl.error) err = pl.error;
+    else { patch.locs = pl.value; patch.loc = locScalar(pl.value); }
+  } else if (!err && has('loc')) {
+    var one = body.loc === null || body.loc === '' || body.loc === undefined ? null : String(body.loc).slice(0, 40);
+    if (one && LOC_IDS.indexOf(one) === -1) err = 'Unknown restaurant';
+    else { patch.loc = one; patch.locs = one ? [one] : null; }
   }
   if (!err && has('assignedTo')) {
     /* Empty means nobody in particular — whoever is on shift picks it up. */
@@ -314,36 +358,42 @@ router.patch('/items/:tkey', superadminOnly, asyncHandler(function (req, res) {
         return { unchanged: true, tkey: tkey };
       }
 
-      var cols = ['tkey', 'name', 'zone', 'freq', 'day', 'loc', 'job_type',
-                  'assigned_to', 'at_time', 'end_date', 'custom', 'deleted', 'enabled',
-                  'prev_name', 'edited_by', 'edited_at', 'updated_at'];
       var pick = function (col, fallback) {
         return Object.prototype.hasOwnProperty.call(patch, col) ? patch[col]
           : (row ? row[col] : fallback);
       };
-      var vals = [
-        tkey,
-        pick('name', builtIn),
-        pick('zone', null),
-        pick('freq', null),
-        pick('day', null),
-        pick('loc', null),
-        row ? row.job_type : 'cleaning',
-        pick('assigned_to', null),
-        pick('at_time', null),
-        pick('end_date', null),
-        row ? row.custom : false,
-        pick('deleted', false),
-        pick('enabled', false),
-        renaming ? prev : (row ? row.prev_name : null),
-        req.auth.id
+
+      /* Column and value in one place, so adding a field cannot shift the
+         others. This used to be three hand-kept lists — a column name list, a
+         values list and a run of $n placeholders — and getting them out of
+         step would have written one column's value into another. */
+      var set = [
+        ['name', pick('name', builtIn)],
+        ['zone', pick('zone', null)],
+        ['freq', pick('freq', null)],
+        ['day', pick('day', null)],
+        ['loc', pick('loc', null)],
+        ['locs', JSON.stringify(pick('locs', null)), '::jsonb'],
+        ['job_type', row ? row.job_type : 'cleaning'],
+        ['assigned_to', pick('assigned_to', null)],
+        ['at_time', pick('at_time', null)],
+        ['end_date', pick('end_date', null)],
+        ['custom', row ? row.custom : false],
+        ['deleted', pick('deleted', false)],
+        ['enabled', pick('enabled', false)],
+        ['prev_name', renaming ? prev : (row ? row.prev_name : null)],
+        ['edited_by', req.auth.id]
       ];
 
+      var vals = [tkey].concat(set.map(function (s) { return s[1]; }));
+      var holder = function (s, i) { return '$' + (i + 2) + (s[2] || ''); };
+
       return client.query(
-        'insert into bk_checklist (' + cols.join(', ') + ') ' +
-        'values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15, now(), now()) ' +
+        'insert into bk_checklist (tkey, ' + set.map(function (s) { return s[0]; }).join(', ') +
+        ', edited_at, updated_at) ' +
+        'values ($1, ' + set.map(holder).join(', ') + ', now(), now()) ' +
         'on conflict (tkey) do update set ' +
-        cols.slice(1, 15).map(function (c, i) { return c + ' = $' + (i + 2); }).join(', ') +
+        set.map(function (s, i) { return s[0] + ' = ' + holder(s, i); }).join(', ') +
         ', edited_at = now(), updated_at = now()',
         vals
       ).then(function () {
