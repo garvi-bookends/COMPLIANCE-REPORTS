@@ -1175,6 +1175,17 @@ function weekId(d) {
   return t.getFullYear() + '-W' + pad2(wk);
 }
 var MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+/* '10:00' -> '10:00 AM'. Stored as 24-hour so it sorts and compares; shown
+   the way the kitchen says it. */
+function fmtTime(hhmm) {
+  if (!hhmm) return '';
+  var p = String(hhmm).split(':');
+  var hr = parseInt(p[0], 10);
+  if (!isFinite(hr)) return '';
+  var ap = hr < 12 ? 'AM' : 'PM';
+  var h12 = hr % 12; if (h12 === 0) h12 = 12;
+  return h12 + ':' + (p[1] || '00') + ' ' + ap;
+}
 function fmtD(s) { if (!s) return '—'; var d = parseD(s); return pad2(d.getDate()) + ' ' + MON[d.getMonth()] + ' ' + String(d.getFullYear()).slice(2); }
 function fmtDT(ts) {
   if (!ts) return '—';
@@ -2914,7 +2925,8 @@ function taskRow(t) {
     (ph ? '<img class="thumb" src="' + photoSrc(t.after || t.before) + '">' :
       '<span class="thumb" style="display:grid;place-items:center;color:#b8bfc4;font-size:19px">🧽</span>') +
     '<span class="grow">' + cnameHtml(tkeyOf(t), cleanName(t), 't trunc') +
-    '<div class="xs muted" style="margin:2px 0 5px">' + h(t.zone) + ' · ' + h(uname(t.assigned).split(' ')[0]) + ' · due ' + fmtD(t.due) + '</div>' +
+    '<div class="xs muted" style="margin:2px 0 5px">' + h(t.zone) + ' · ' + h(uname(t.assigned).split(' ')[0]) +
+    ' · ' + fmtD(t.due) + (t.time ? ' · ' + h(fmtTime(t.time)) : '') + '</div>' +
     statusPill(t) + (t.freq === 'M' ? ' ' + pill('MONTHLY', 'p-blu') : '') +
     (fixedDay(t) != null ? ' ' + pill('EVERY ' + DAY_NAMES[fixedDay(t)].toUpperCase(), 'p-yel') : '') +
     (missingPhoto(t) ? ' ' + pill('NO PHOTO', 'p-org') : '') +
@@ -3005,7 +3017,7 @@ function taskSheet(id) {
     renameNote(t) +
     '<div class="sm muted">' + h(t.zone) + ' · ' + (t.freq === 'M' ? 'Monthly heavy job' : fixedDay(t) != null ? 'Weekly job · every ' + DAY_NAMES[fixedDay(t)] : 'Weekly job') + ' · ' + h(lname(t.loc)) + '</div></div>' + statusPill(t) + '</div>' +
     '<div class="grid2" style="margin-top:12px">' +
-    kv('Assigned to', uname(t.assigned)) + kv('Due date', fmtD(t.due)) +
+    kv('Assigned to', uname(t.assigned)) + kv('Due date', fmtD(t.due) + (t.time ? ' · ' + fmtTime(t.time) : '')) +
     kv('Done by', t.completedBy ? uname(t.completedBy) : t.completedAt ? uname(t.assigned) : '—') +
     kv('Completed', t.completedAt ? fmtDT(t.completedAt) : '—') + '</div>' +
     (t.status === 'rejected' ? '<div class="card" style="background:#fdecea;border-color:#f6c9c4;margin:12px 0 0"><b class="sm">Rejected — ' + h(uname(t.approvedBy)) + (t.approvedAt ? ' · ' + h(fmtDT(t.approvedAt)) : '') + '</b><div class="sm">' + h(t.reject) + '</div></div>' : '') +
