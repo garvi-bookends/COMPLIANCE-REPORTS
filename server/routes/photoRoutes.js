@@ -3,8 +3,12 @@
    POST /api/photos — store one cleaning or product photo.
 
    Body: the image itself (Content-Type image/jpeg or image/png), at most
-   1 MB. The app shrinks photos to 640px before sending, so a real one is
-   around 30–80 KB. Query ?loc=<kitchen> files it under that kitchen.
+   12 MB. Photos are sent at the size they were taken, so a real one is a
+   few MB. Query ?loc=<kitchen> files it under that kitchen.
+
+   Note for Vercel: a serverless function there will not receive a request
+   body over about 4.5 MB, so that — not this limit — is what a photo has
+   to fit through on that host. The app keeps its uploads under it.
 
    Replies { url }. The photo goes to Vercel Blob under a random name, so its
    address cannot be guessed from a task id. Previously the browser uploaded
@@ -21,7 +25,9 @@ var asyncHandler = require('../middleware/errorHandler').asyncHandler;
 
 var router = express.Router();
 
-var MAX_BYTES = 1024 * 1024;
+/* Generous enough for a full-resolution photo from any phone. Nothing here
+   resizes or re-compresses what arrives: the bytes are stored as sent. */
+var MAX_BYTES = 12 * 1024 * 1024;
 var READ_ONLY_ROLES = ['auditor'];
 var LOC_RE = /^[A-Za-z0-9_-]{1,32}$/;
 

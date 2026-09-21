@@ -1931,6 +1931,9 @@ function toast(msg) {
   document.body.appendChild(d); setTimeout(function () { d.remove(); }, 2300);
 }
 
+/* The photo exactly as it was stored: the blob URL of the uploaded file, or
+   the data URL while it is still on the device. Never a thumbnail or a
+   resized copy — there is only ever one image per job. */
 function photoSrc(v) { return v || ''; }
 
 /* ---------- in-app dialogs ----------
@@ -2299,6 +2302,55 @@ function saveClean() {
 
 
 /* ---------- camera capture + compress ---------- */
+/* How large an upload may be. The photo route accepts 12 MB, but on Vercel a
+   serverless function will not receive a request body over about 4.5 MB, so
+   that is the real ceiling and this stays under it. A full-resolution photo
+   at quality 0.92 is usually 2–4 MB, so most go up untouched in size. */
+var PHOTO_MAX_BYTES = 4 * 1024 * 1024;
+
+/* Draws the photo at its own size with the date and initials across the
+   bottom, and hands back a data URL.
+
+   The photo keeps the width and height it was taken at. It used to be shrunk
+   to 640px and saved at quality 0.5, which is what made it look blurry; it is
+   now saved at 0.92 and only re-saved smaller if it would otherwise be too
+   large to upload at all. The stamp scales with the photo so it stays
+   readable whatever the size. */
+function stampPhoto(im, srcType) {
+  var w = im.naturalWidth || im.width, h = im.naturalHeight || im.height;
+  var stamp = fmtDT(Date.now()) + '  ·  ' + (ME ? initials(ME.name) : '');
+
+  function draw(scale, mime, quality) {
+    var c = document.createElement('canvas');
+    c.width = Math.max(1, Math.round(w * scale));
+    c.height = Math.max(1, Math.round(h * scale));
+    var x = c.getContext('2d');
+    x.drawImage(im, 0, 0, c.width, c.height);
+    var bar = Math.max(22, Math.round(c.height * 0.035));
+    x.fillStyle = 'rgba(0,0,0,.6)';
+    x.fillRect(0, c.height - bar, c.width, bar);
+    x.fillStyle = '#fff';
+    x.font = 'bold ' + Math.round(bar * 0.62) + 'px sans-serif';
+    x.fillText(stamp, Math.round(bar * 0.35), c.height - Math.round(bar * 0.3));
+    return c.toDataURL(mime, quality);
+  }
+  function fits(url) { return url.length * 0.75 <= PHOTO_MAX_BYTES; }
+
+  /* Full size, in the format it arrived in, at high quality. Anything after
+     this is a fallback for a photo too big to send, tried in order of how
+     little it gives away. */
+  var png = srcType === 'image/png';
+  var first = draw(1, png ? 'image/png' : 'image/jpeg', 0.92);
+  if (fits(first)) return first;
+
+  var tries = [[1, 0.92], [1, 0.85], [0.75, 0.88], [0.6, 0.85], [0.45, 0.8]];
+  for (var i = png ? 0 : 1; i < tries.length; i++) {
+    var out = draw(tries[i][0], 'image/jpeg', tries[i][1]);
+    if (fits(out)) return out;
+  }
+  return draw(0.3, 'image/jpeg', 0.75);
+}
+
 function capture(cb) {
   var inp = document.createElement('input');
   inp.type = 'file'; inp.accept = 'image/*'; inp.setAttribute('capture', 'environment');
@@ -2308,18 +2360,11 @@ function capture(cb) {
     var fr = new FileReader();
     fr.onload = function () {
       var im = new Image();
-      im.onload = function () {
-        var max = 640, sc = Math.min(1, max / Math.max(im.width, im.height));
-        var c = document.createElement('canvas');
-        c.width = Math.round(im.width * sc); c.height = Math.round(im.height * sc);
-        var x = c.getContext('2d'); x.drawImage(im, 0, 0, c.width, c.height);
-        var stamp = fmtDT(Date.now()) + '  ·  ' + (ME ? initials(ME.name) : '');
-        x.fillStyle = 'rgba(0,0,0,.6)'; x.fillRect(0, c.height - 20, c.width, 20);
-        x.fillStyle = '#fff'; x.font = 'bold 11px sans-serif'; x.fillText(stamp, 6, c.height - 6);
-        cb(c.toDataURL('image/jpeg', 0.5)); inp.remove();
-      };
+      im.onload = function () { cb(stampPhoto(im, f.type)); inp.remove(); };
+      im.onerror = function () { toast('That photo could not be read — try again'); inp.remove(); };
       im.src = fr.result;
     };
+    fr.onerror = function () { toast('That photo could not be read — try again'); inp.remove(); };
     fr.readAsDataURL(f);
   };
   inp.click();
