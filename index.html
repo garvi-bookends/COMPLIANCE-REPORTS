@@ -4609,12 +4609,10 @@ function renderJobManagement() {
     '<div class="card sm muted" style="margin-top:10px">Open a job type below to add jobs to it.</div>';
 
   html += mgSearchBox(MGMT_Q, 'Job type name or description');
-  html += mgChips([['all', 'All ' + types.length], ['active', 'Active ' + activeT.length],
-    ['inactive', 'Inactive ' + (types.length - activeT.length)]], MGMT_FILTER);
+  html += mgChips([['all', 'All ' + types.length], ['active', 'Active ' + activeT.length]], MGMT_FILTER);
 
   var shown = types.filter(function (t) {
     if (MGMT_FILTER === 'active' && !t.active) return false;
-    if (MGMT_FILTER === 'inactive' && t.active) return false;
     return mgMatches([t.name, t.description || '']);
   });
 
