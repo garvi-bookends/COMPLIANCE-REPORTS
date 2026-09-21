@@ -164,8 +164,10 @@ router.post('/:kind', asyncHandler(function (req, res) {
   });
 }));
 
-/* Roles allowed to approve and reject cleaning (ROLES[].approve in the app). */
-var APPROVER_ROLES = ['superadmin', 'exec', 'aexec', 'admin', 'hok', 'manager'];
+/* Who may approve and reject cleaning: the Super Admin, and nobody else.
+   Everyone else sends completed work for review, so this is also what stops
+   someone signing off their own job by editing the record on a phone. */
+var APPROVER_ROLES = ['superadmin'];
 
 /* Fields only an approver may change. `approved` is handled on its own,
    because sending a rejected job again legitimately clears it. */

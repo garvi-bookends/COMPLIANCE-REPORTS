@@ -975,16 +975,18 @@ function assignableRoles() {
   return Object.keys(ROLES).filter(function (k) { return !ROLES[k].superadmin; });
 }
 
+/* `approve` belongs to the Super Admin alone. Everyone else records the work
+   and sends it; nobody signs off a job they did themselves. */
 var ROLES = {
   /* Exactly one account holds this (husen). It is the only one that can approve
      or reject self sign-ups. It is set on the server with
      `npm run set-superadmin`, never from inside the app. */
   superadmin: { label: 'Super Admin',            all: true, approve: true, edit: true, manage: true, readonly: false, superadmin: true },
-  exec:    { label: 'Execution Head',            all: true, approve: true, edit: true, manage: true, readonly: false },
-  aexec:   { label: 'Assistant Execution Head',  all: true, approve: true, edit: true, manage: true, readonly: false },
-  admin:   { label: 'Admin',            all: true,  approve: true,  edit: true,  manage: true,  readonly: false },
-  hok:     { label: 'Head of Kitchen',  all: true,  approve: true,  edit: true,  manage: false, readonly: false },
-  manager: { label: 'Location Manager', all: false, approve: true,  edit: false, manage: false, readonly: false },
+  exec:    { label: 'Execution Head',            all: true, approve: false, edit: true, manage: true, readonly: false },
+  aexec:   { label: 'Assistant Execution Head',  all: true, approve: false, edit: true, manage: true, readonly: false },
+  admin:   { label: 'Admin',            all: true,  approve: false, edit: true,  manage: true,  readonly: false },
+  hok:     { label: 'Head of Kitchen',  all: true,  approve: false, edit: true,  manage: false, readonly: false },
+  manager: { label: 'Location Manager', all: false, approve: false, edit: false, manage: false, readonly: false },
   staff:   { label: 'Kitchen Staff',    all: false, approve: false, edit: false, manage: false, readonly: false },
   auditor: { label: 'Auditor',          all: true,  approve: false, edit: false, manage: false, readonly: true }
 };
@@ -1237,6 +1239,14 @@ function weekId(d) {
 var MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 /* '10:00' -> '10:00 AM'. Stored as 24-hour so it sorts and compares; shown
    the way the kitchen says it. */
+/* The date and the clock time a job was finished, shown separately because
+   the review list asks for both. */
+function fmtDateOf(ts) { return ts ? fmtD(ymd(new Date(ts))) : '—'; }
+function fmtClock(ts) {
+  if (!ts) return '—';
+  var d = new Date(ts), hr = d.getHours();
+  return (hr % 12 || 12) + ':' + pad2(d.getMinutes()) + ' ' + (hr < 12 ? 'AM' : 'PM');
+}
 function fmtTime(hhmm) {
   if (!hhmm) return '';
   var p = String(hhmm).split(':');
@@ -2329,7 +2339,7 @@ function bar(pct, color) { return '<div class="bar"><i style="width:' + pct + '%
 function pill(txt, cls) { return '<span class="pill ' + cls + '">' + h(txt) + '</span>'; }
 function statusPill(t) {
   if (t.status === 'rejected') return pill('REJECTED', 'p-red');
-  if (t.status === 'completed') return t.approved ? pill('APPROVED', 'p-grn') : pill('AWAITING OK', 'p-blu');
+  if (t.status === 'completed') return t.approved ? pill('APPROVED', 'p-grn') : pill('PENDING APPROVAL', 'p-blu');
   return daysBetween(ymd(today()), t.due) < 0 ? pill('OVERDUE', 'p-org') : pill('PENDING', 'p-gry');
 }
 function ic(name) {
@@ -3128,9 +3138,9 @@ function taskSheet(id) {
 
   if (canDo && t.status !== 'completed' && isMine) {
     body += '<div class="card" style="margin-top:12px"><div class="step ' + (hasPh ? 'done' : 'todo') + '"><span class="n">' + (hasPh ? '✓' : '1') + '</span><span class="sm b">Take a photo</span></div>' +
-      '<div class="step ' + (hasPh ? '' : 'todo') + '"><span class="n">2</span><span class="sm b">Tap the green button below</span></div></div>';
+      '<div class="step ' + (hasPh ? '' : 'todo') + '"><span class="n">2</span><span class="sm b">Tap Send — it goes to the Super Admin</span></div></div>';
     body += hasPh
-      ? '<button class="btn ok" data-a="markDone" data-x="' + t.id + '">✓ Done — send for approval</button>'
+      ? '<button class="btn ok" data-a="markDone" data-x="' + t.id + '">➤ Send</button>'
       : '<button class="btn" style="background:#d3d8d4" data-a="needPhotos">📷 Add a photo first</button>';
   }
   if (canDo && p.approve && t.status === 'completed' && !t.approved) {
@@ -3139,7 +3149,7 @@ function taskSheet(id) {
       '<button class="btn no" data-a="rejectAsk" data-x="' + t.id + '">Reject</button></div>';
   }
   if (canDo && !p.approve && t.status === 'completed' && !t.approved) {
-    body += '<div class="card sm muted center" style="margin-top:10px">Waiting for manager approval</div>';
+    body += '<div class="card sm muted center" style="margin-top:10px">Sent to the Super Admin · waiting for approval</div>';
   }
   if (canDo && p.approve && t.status !== 'pending') {
     body += '<div style="height:10px"></div><button class="btn sec" data-a="reopen" data-x="' + t.id + '">↺ Re-open task</button>';
@@ -4222,7 +4232,8 @@ function mgMatches(hayParts) {
    the phone panel can never drift apart. */
 var MGMT_ITEMS = [
   ['users', '👥', 'User Management', 'Users, roles and assignments'],
-  ['jobs', '💼', 'Job Management', 'Job types, services and setup']
+  ['jobs', '💼', 'Job Management', 'Job types, services and setup'],
+  ['review', '✅', 'Task Review', 'Approve or reject completed work']
 ];
 
 /* The phone rendering: a panel above the bottom bar, because a horizontal bar
@@ -4230,8 +4241,9 @@ var MGMT_ITEMS = [
 function mgMenuPanel() {
   if (!MGMT_MENU || !ME || !perm().superadmin) return '';
   var waiting = PENDING_SIGNUPS + RESET_REQUESTS;
+  var review = DB ? tasksAwaitingApproval().length : 0;
   return '<div class="mgmenu">' + MGMT_ITEMS.map(function (it) {
-    var badge = it[0] === 'users' ? waiting : 0;
+    var badge = it[0] === 'users' ? waiting : it[0] === 'review' ? review : 0;
     return '<button class="mgmenu-i' + (S.tab === 'manage' && S.manage === it[0] ? ' on' : '') +
       '" data-a="mgmtOpen" data-x="' + it[0] + '">' +
       '<span class="mgmenu-ic">' + it[1] + '</span>' +
@@ -4242,9 +4254,64 @@ function mgMenuPanel() {
   }).join('') + '</div>';
 }
 
+/* Everything sent in and not yet decided on, newest first. Not limited to a
+   week: a job waiting since last month is exactly the one that needs
+   looking at. */
+function tasksAwaitingApproval() {
+  return DB.tasks.filter(function (t) {
+    return t.status === 'completed' && !t.approved && taskLive(t);
+  }).sort(function (a, b) { return (b.completedAt || 0) - (a.completedAt || 0); });
+}
+
+function renderTaskReview() {
+  var list = tasksAwaitingApproval();
+  var html = mgHead('TASK REVIEW', 'Management · Super Admin', ['mgmtBack', 'Dashboard']);
+
+  var byLoc = {}, byUser = {};
+  list.forEach(function (t) { byLoc[t.loc] = 1; if (t.completedBy) byUser[t.completedBy] = 1; });
+  html += mgStatsRow([
+    [list.length, 'Waiting', list.length ? 'var(--org)' : 'var(--grn)'],
+    [Object.keys(byUser).length, 'People', 'var(--blue)'],
+    [Object.keys(byLoc).length, 'Restaurants', 'var(--blue)'],
+    [list.filter(function (t) { return t.before || t.after; }).length, 'With photos', 'var(--ink)']
+  ]);
+
+  html += mgSearchBox(MGMT_Q, 'Person, job, restaurant or job type');
+
+  var shown = list.filter(function (t) {
+    return mgMatches([uname(t.completedBy), cleanName(t), jobTypeName(taskJobType(t)), lname(t.loc), t.zone || '']);
+  });
+
+  html += '<div class="sec-t">Sent for approval · ' + shown.length + '</div>';
+  html += mgTable(['User', 'Task / Service', 'Project', 'Area', 'Restaurant', 'Completed date', 'Completed time', 'Status', 'Actions'],
+    shown.map(function (t) {
+      return '<tr>' +
+        '<td><span class="b">' + h(uname(t.completedBy)) + '</span></td>' +
+        '<td><button class="linkish b" data-a="task" data-x="' + h(t.id) + '">' + h(cleanName(t)) + '</button>' +
+          (t.before || t.after ? '<div class="xs muted">photo attached</div>' : '<div class="xs" style="color:var(--org)">no photo</div>') + '</td>' +
+        '<td class="sm">' + h(jobTypeName(taskJobType(t))) + '</td>' +
+        '<td class="sm muted">' + h(t.zone || '—') + '</td>' +
+        '<td class="sm">' + h(lname(t.loc)) + '</td>' +
+        '<td class="sm">' + h(fmtDateOf(t.completedAt)) + '</td>' +
+        '<td class="sm">' + h(fmtClock(t.completedAt)) + '</td>' +
+        '<td>' + statusPill(t) + '</td>' +
+        '<td class="nowrap">' +
+          mgBtn('approve', t.id, '✓', 'Approve', 'background:#e3f4ea;color:var(--grn)') +
+          mgBtn('rejectAsk', t.id, '✕', 'Reject', 'background:#f6e7e5;color:var(--red)') +
+        '</td></tr>';
+    }), list.length ? 'Nothing matches “' + MGMT_Q + '”' : 'Nothing is waiting — every job sent in has been decided on');
+
+  html += '<div class="card sm muted" style="margin-top:12px">Only this account can approve or reject. ' +
+    'Everyone else records the work and sends it here.</div>';
+
+  $('#app').innerHTML = html + '<div style="height:20px"></div></div>';
+  mgWireSearch(renderTaskReview);
+}
+
 function renderManage() {
   if (!perm().superadmin) { S.tab = 'home'; render(); return; }
-  if (S.manage === 'jobs') renderJobManagement();
+  if (S.manage === 'review') renderTaskReview();
+  else if (S.manage === 'jobs') renderJobManagement();
   else if (S.manage === 'type') renderTypeServices();
   else renderUserManagement();
   /* Every other screen redraws the tab bar as it finishes; these must too, so
@@ -5164,10 +5231,13 @@ document.addEventListener('click', function (ev) {
       var t4 = T(x);
       if (!t4.before && !t4.after) { toast('A photo is compulsory'); break; }
       t4.status = 'completed'; t4.completedAt = Date.now(); t4.completedBy = ME.id; t4.approved = null; t4.reject = '';
-      save('tasks', t4); logAct('clean', 'Completed: ' + cleanName(t4), t4.loc); taskSheet(t4.id); toast('Sent for approval'); break;
+      save('tasks', t4); logAct('clean', 'Completed: ' + cleanName(t4), t4.loc); taskSheet(t4.id); toast('Sent to the Super Admin'); break;
     }
-    case 'approve': { var t5 = T(x); t5.status = 'completed'; t5.approved = true; t5.approvedBy = ME.id; t5.approvedAt = Date.now(); t5.reject = ''; save('tasks', t5); logAct('approve', 'Approved: ' + cleanName(t5), t5.loc); closeSheet(); render(); toast('Approved ✓'); break; }
+    /* Guarded here as well as hidden in the UI — approving is the Super
+       Admin's alone, and the server refuses it for anyone else too. */
+    case 'approve': { if (!perm().approve) { toast('Only the Super Admin can approve'); break; } var t5 = T(x); t5.status = 'completed'; t5.approved = true; t5.approvedBy = ME.id; t5.approvedAt = Date.now(); t5.reject = ''; save('tasks', t5); logAct('approve', 'Approved: ' + cleanName(t5), t5.loc); closeSheet(); render(); toast('Approved ✓'); break; }
     case 'rejectAsk': {
+      if (!perm().approve) { toast('Only the Super Admin can reject'); break; }
       askText('Reject this job', 'The person who did it will see this reason.', 'Area re-do required', 'What was wrong?', 'Reject', function (reason) {
         if (reason === null) return;
         var t6 = T(x); t6.status = 'rejected'; t6.approved = false; t6.approvedBy = ME.id; t6.approvedAt = Date.now(); t6.reject = reason || 'Rejected';
