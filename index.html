@@ -3335,6 +3335,24 @@ function productSheet(id) {
   }
   openSheet('Product', body);
 }
+/* What the sticker is going to say, read back while the form is being filled.
+   The dates are live, so an item that is already past its use-by shows up
+   here rather than on a label somebody has stuck to a container. */
+function labelDetailHTML(opened, expiry) {
+  var st = expiryStatus(expiry), life = daysBetween(opened, expiry);
+  var left = st.days < 0 ? Math.abs(st.days) + ' days ago' : st.days === 0 ? 'today' : st.days + ' days left';
+  return '<div class="row" style="align-items:center">' +
+    '<div class="grow">' + pill(st.label, st.cls) + '</div>' +
+    '<div class="sm b">' + left + '</div></div>' +
+    '<div class="xs muted" style="margin-top:6px">' + h(fmtD(opened)) + ' → ' + h(fmtD(expiry)) +
+    (life >= 0 ? ' · ' + life + ' day shelf life' : ' · use-by is before the opened date') + '</div>';
+}
+function refreshLabelDetail() {
+  var box = document.getElementById('f_labelstat');
+  if (!box) return;
+  var o = document.getElementById('f_opened'), e = document.getElementById('f_expiry');
+  if (o && e && o.value && e.value) box.innerHTML = labelDetailHTML(o.value, e.value);
+}
 function productForm(id) {
   var p = id ? DB.products.filter(function (x) { return x.id === id; })[0] : null;
   var loc = p ? p.loc : (S.loc === 'ALL' ? visibleLocations()[0].id : S.loc);
@@ -3365,9 +3383,27 @@ function productForm(id) {
     '<label class="f"><span>Notes <span class="muted">(optional)</span></span>' +
     '<input class="inp" id="f_note" maxlength="200" value="' + h(f.note || '') + '" placeholder="e.g. opened for Saturday prep"></label>' +
     '</div>' +
+    '<div class="sec-t">Label</div>' +
+    '<div class="card">' +
+    '<div id="f_labelstat">' + labelDetailHTML(f.opened, f.expiry) + '</div>' +
+    '<div class="row" style="margin-top:10px;align-items:center">' +
+    '<div class="grow sm b">' + (p ? (p.labelled ? '✓ Label applied ' + h(fmtD(ymd(new Date(p.labelledAt)))) : '✕ Label not written yet')
+      : 'The label &amp; QR are made when you save') + '</div>' +
+    (p ? pill(p.labelled ? 'LABEL OK' : 'LABEL MISSING', p.labelled ? 'p-grn' : 'p-red') : '') + '</div>' +
+    /* The code and its QR, scannable straight off the screen. No button out to
+       the label sheet — that would replace this one and lose what was typed. */
+    (p ? '<div class="row" style="margin-top:12px;align-items:center">' +
+      '<div>' + QR.svg(labelPayload(p), 88, 1) + '</div>' +
+      '<div class="grow"><div class="xs muted">Label code</div><div class="b">' + h(p.id) + '</div>' +
+      '<div class="xs muted" style="margin-top:4px">Point a phone camera at this to open the product.</div></div></div>' : '') +
+    '</div>' +
     '<button class="btn" data-a="saveProduct">' + (id ? 'Save changes' : 'Add product') + '</button>' +
     (id ? '' : '<div class="sm muted center" style="margin-top:10px">A label &amp; QR is generated right after saving.</div>');
   openSheet(id ? 'Edit product' : 'Add product · ' + lname(loc), body);
+  ['f_opened', 'f_expiry'].forEach(function (fid) {
+    var el = document.getElementById(fid);
+    if (el) { el.addEventListener('change', refreshLabelDetail); el.addEventListener('input', refreshLabelDetail); }
+  });
 }
 
 /* ---------------- LABELS ---------------- */
@@ -5371,7 +5407,9 @@ document.addEventListener('click', function (ev) {
     case 'editProduct': closeSheet(); productForm(x); break;
     case 'quickExp': {
       var od = document.getElementById('f_opened').value || ymd(today());
-      document.getElementById('f_expiry').value = ymd(addDays(parseD(od), +x)); break;
+      document.getElementById('f_expiry').value = ymd(addDays(parseD(od), +x));
+      refreshLabelDetail();   /* setting .value fires no event of its own */
+      break;
     }
     case 'shootProduct': capture(function (data) {
       window._form.photo = data;
