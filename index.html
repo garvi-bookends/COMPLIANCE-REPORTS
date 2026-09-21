@@ -1276,6 +1276,12 @@ function weekStart(wid) {
 }
 
 /* ---------------- expiry classification ---------------- */
+function expiryStatus(expiry) {
+  var d = daysBetween(ymd(today()), expiry);
+  if (d < 0)  return { k: 'expired', label: 'EXPIRED', cls: 'p-red', days: d };
+  if (d <= 7) return { k: 'soon', label: 'EXPIRING SOON', cls: 'p-org', days: d };
+  return { k: 'active', label: 'ACTIVE', cls: 'p-grn', days: d };
+}
 function expiryState(expDate) {
   var d = daysBetween(ymd(today()), expDate);
   if (d < 0)   return { k: 'expired', label: 'EXPIRED',      cls: 'p-red', color: 'var(--red)', days: d, emoji: '🔴' };
@@ -3243,32 +3249,65 @@ function prodRow(p) {
 }
 function renderExpiry() {
   var loc = S.loc, e = expiryStats(loc), ps = productsFor(loc);
-  var f = S.expFilter;
-  var list = ps.filter(function (p) { return f === 'all' || expiryState(p.expiry).k === f; })
-    .filter(function (p) { return !S.q || (p.name + p.batch + p.cat).toLowerCase().indexOf(S.q.toLowerCase()) > -1; })
+
+  /* The dashboard can send someone here on its own four states; 'month' and
+     'safe' both mean "not urgent" in the three this page works in. */
+  var f = S.expFilter === 'month' || S.expFilter === 'safe' ? 'active' : (S.expFilter || 'all');
+  var q = (S.q || '').toLowerCase();
+
+  var counts = { all: ps.length, active: 0, soon: 0, expired: 0 };
+  ps.forEach(function (p) { counts[expiryStatus(p.expiry).k]++; });
+
+  var list = ps.filter(function (p) { return f === 'all' || expiryStatus(p.expiry).k === f; })
+    .filter(function (p) { return !q || (p.name + ' ' + p.cat + ' ' + p.batch).toLowerCase().indexOf(q) > -1; })
     .sort(function (a, b) { return parseD(a.expiry) - parseD(b.expiry); });
 
-  var html = header('EXPIRY DATE CHECKING', lname(loc));
+  var html = header('EXPIRY DATE', lname(loc));
   html += '<div class="wrap">';
-  html += '<div class="grid2" style="margin-bottom:10px">' +
-    '<button class="stat" data-a="efilter" data-x="expired" style="border-color:' + (e.expired ? 'var(--red)' : 'var(--line)') + '"><b style="color:var(--red)">' + e.expired + '</b><span>🔴 Expired</span></button>' +
-    '<button class="stat" data-a="efilter" data-x="soon" style="border-color:' + (e.soon ? 'var(--org)' : 'var(--line)') + '"><b style="color:var(--org)">' + e.soon + '</b><span>🟠 Within 7 days</span></button>' +
-    '<button class="stat" data-a="efilter" data-x="month"><b style="color:var(--yel)">' + e.month + '</b><span>🟡 Within 30 days</span></button>' +
-    '<button class="stat" data-a="efilter" data-x="safe"><b style="color:var(--grn)">' + e.safe + '</b><span>🟢 Safe</span></button>' +
+  html += '<div class="stats">' +
+    statCard(counts.all, 'Items', 'var(--ink)') +
+    statCard(counts.active, 'Active', 'var(--grn)') +
+    statCard(counts.soon, 'Expiring soon', counts.soon ? 'var(--org)' : 'var(--mut)') +
+    statCard(counts.expired, 'Expired', counts.expired ? 'var(--red)' : 'var(--mut)') +
     '</div>';
   if (e.expired || e.soon) {
     html += '<div class="card" style="background:#fff6ec;border-color:#f3d9b8"><div class="row">' +
       '<div style="font-size:22px">⚠️</div><div class="grow sm"><b>' + (e.expired ? e.expired + ' expired item' + (e.expired > 1 ? 's' : '') + ' must be discarded now. ' : '') +
       (e.soon ? e.soon + ' item' + (e.soon > 1 ? 's' : '') + ' expire within 7 days.' : '') + '</b></div></div></div>';
   }
-  html += '<input class="inp" id="pq" placeholder="🔍  Search product or batch" value="' + h(S.q) + '" style="margin-bottom:10px">';
-  html += '<div class="chips">' + [['all', 'All ' + ps.length], ['expired', '🔴 Expired'], ['soon', '🟠 ≤7 days'], ['month', '🟡 ≤30 days'], ['safe', '🟢 Safe']].map(function (c) {
+  html += '<label class="f" style="margin-top:12px"><span>Search</span>' +
+    '<input class="inp" id="pq" placeholder="Item or category" value="' + h(S.q) + '"></label>';
+  html += '<div class="chips">' + [['all', 'All ' + counts.all], ['active', 'Active ' + counts.active],
+    ['soon', 'Expiring soon ' + counts.soon], ['expired', 'Expired ' + counts.expired]].map(function (c) {
     return '<button class="chip' + (f === c[0] ? ' on' : '') + '" data-a="efilter" data-x="' + c[0] + '">' + c[1] + '</button>';
   }).join('') + '</div>';
-  html += '<div class="card pad0">' + (list.length ? list.map(prodRow).join('') : '<div class="empty"><div class="ic">📦</div>No products in this view</div>') + '</div>';
+
+  var readOnly = perm().readonly;
+  html += '<div class="sec-t">Items · ' + list.length + (list.length !== ps.length ? ' of ' + ps.length : '') + '</div>';
+  html += '<div class="tablewrap"><table class="utable"><thead><tr>' +
+    ['Item', 'Category', 'Expiry date', 'Status', 'Added', 'Actions'].map(function (c) { return '<th>' + c + '</th>'; }).join('') +
+    '</tr></thead><tbody>' +
+    (list.length ? list.map(function (p) {
+      var st = expiryStatus(p.expiry);
+      return '<tr>' +
+        '<td><button class="linkish b" data-a="product" data-x="' + h(p.id) + '">' + h(p.name) + '</button>' +
+          '<div class="xs muted">' + h(p.batch || '—') + ' · ' + p.qty + ' ' + h(p.unit) + '</div></td>' +
+        '<td class="sm">' + h(p.cat) + '</td>' +
+        '<td class="sm">' + h(fmtD(p.expiry)) +
+          '<div class="xs muted">' + (st.days < 0 ? Math.abs(st.days) + ' days ago' : st.days + ' days left') + '</div></td>' +
+        '<td>' + pill(st.label, st.cls) + '</td>' +
+        '<td class="sm muted">' + h(p.createdAt ? fmtD(ymd(new Date(p.createdAt))) : '—') + '</td>' +
+        '<td class="nowrap">' + (readOnly ? '<span class="xs muted">view only</span>' :
+          mgBtn('editProduct', p.id, '✏️', 'Edit this item') +
+          mgBtn('delProduct', p.id, '✕', 'Delete this item', 'background:#f6e7e5;color:var(--red)')) + '</td>' +
+        '</tr>';
+    }).join('')
+      : '<tr><td colspan="6" class="sm muted center" style="padding:18px">' +
+        (q ? 'Nothing matches “' + h(S.q) + '”' : 'No items in this view') + '</td></tr>') +
+    '</tbody></table></div>';
   html += '<div style="height:20px"></div></div>';
   $('#app').innerHTML = html;
-  if (!perm().readonly) $('#app').insertAdjacentHTML('beforeend', '<button class="fab" data-a="addProduct">＋ Add product</button>');
+  if (!perm().readonly) $('#app').insertAdjacentHTML('beforeend', '<button class="fab" data-a="addProduct">＋ Add Expiry Date</button>');
   tabbar();
 }
 function productSheet(id) {
@@ -3282,7 +3321,8 @@ function productSheet(id) {
     '<div class="grid2" style="margin-top:14px">' +
     kv('Batch number', p.batch) + kv('Quantity', p.qty + ' ' + p.unit) +
     kv('Opened / received', fmtD(p.opened)) + kv('Use by', fmtD(p.expiry)) +
-    kv('Storage', p.storage) + kv('Added by', uname(p.by)) + '</div></div>';
+    kv('Storage', p.storage) + kv('Added by', uname(p.by)) + '</div>' +
+    (p.note ? '<div class="sm" style="margin-top:10px"><b class="xs muted b" style="text-transform:uppercase;letter-spacing:.4px">Notes</b><div>' + h(p.note) + '</div></div>' : '') + '</div>';
   if (st.k === 'expired') body += '<div class="card" style="background:#fdecea;border-color:#f6c9c4"><b class="sm">🔴 Do not use. Discard and record wastage.</b></div>';
   body += '<div class="sec-t">Label status</div><div class="card"><div class="row">' +
     '<div class="grow sm b">' + (p.labelled ? '✓ Labelled ' + fmtD(ymd(new Date(p.labelledAt))) : '✕ No label generated yet') + '</div>' +
@@ -3302,7 +3342,8 @@ function productForm(id) {
   var f = {
     name: p ? p.name : '', cat: p ? p.cat : 'Dairy', batch: p ? p.batch : 'B-' + (1000 + Math.floor(Math.random() * 8999)),
     qty: p ? p.qty : 1, unit: p ? p.unit : 'kg', opened: p ? p.opened : ymd(t),
-    expiry: p ? p.expiry : ymd(addDays(t, 3)), storage: p ? p.storage : 'Chiller 1 (0–4°C)', photo: p ? p.photo : null
+    expiry: p ? p.expiry : ymd(addDays(t, 3)), storage: p ? p.storage : 'Chiller 1 (0–4°C)',
+    note: p ? (p.note || '') : '', photo: p ? p.photo : null
   };
   window._form = f; window._formId = id || null; window._formLoc = loc;
   var body = '<div class="card">' +
@@ -3321,6 +3362,8 @@ function productForm(id) {
       return '<button class="chip" data-a="quickExp" data-x="' + d + '">+' + d + 'd</button>';
     }).join('') + '</div>' +
     '<label class="f"><span>Where is it kept?</span><select class="inp" id="f_storage">' + STORAGE.map(function (s) { return '<option' + (s === f.storage ? ' selected' : '') + '>' + s + '</option>'; }).join('') + '</select></label>' +
+    '<label class="f"><span>Notes <span class="muted">(optional)</span></span>' +
+    '<input class="inp" id="f_note" maxlength="200" value="' + h(f.note || '') + '" placeholder="e.g. opened for Saturday prep"></label>' +
     '</div>' +
     '<button class="btn" data-a="saveProduct">' + (id ? 'Save changes' : 'Add product') + '</button>' +
     (id ? '' : '<div class="sm muted center" style="margin-top:10px">A label &amp; QR is generated right after saving.</div>');
@@ -5406,7 +5449,7 @@ function saveProduct() {
   if (id) {
     var p = DB.products.filter(function (x) { return x.id === id; })[0];
     p.name = name; p.cat = g('f_cat'); p.batch = g('f_batch'); p.qty = +g('f_qty'); p.unit = g('f_unit');
-    p.opened = g('f_opened'); p.expiry = g('f_expiry'); p.storage = g('f_storage');
+    p.opened = g('f_opened'); p.expiry = g('f_expiry'); p.storage = g('f_storage'); p.note = g('f_note').trim();
     if (window._form.photo) p.photo = window._form.photo;
     save('products', p); logAct('product', 'Updated: ' + p.name, p.loc); closeSheet(); render(); toast('Product updated');
   } else {
@@ -5414,7 +5457,7 @@ function saveProduct() {
     var np = {
       id: newProductId(loc), loc: loc, name: name, cat: g('f_cat'),
       batch: g('f_batch'), qty: +g('f_qty'), unit: g('f_unit'), opened: g('f_opened'), expiry: g('f_expiry'),
-      storage: g('f_storage'), photo: window._form.photo || null, labelled: false, labelledAt: null,
+      storage: g('f_storage'), note: g('f_note').trim(), photo: window._form.photo || null, labelled: false, labelledAt: null,
       by: ME.id, initials: initials(ME.name), createdAt: Date.now()
     };
     DB.products.push(np); save('products', np); logAct('product', 'Added: ' + np.name, loc);
