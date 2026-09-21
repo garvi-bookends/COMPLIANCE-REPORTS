@@ -2339,7 +2339,7 @@ function bar(pct, color) { return '<div class="bar"><i style="width:' + pct + '%
 function pill(txt, cls) { return '<span class="pill ' + cls + '">' + h(txt) + '</span>'; }
 function statusPill(t) {
   if (t.status === 'rejected') return pill('REJECTED', 'p-red');
-  if (t.status === 'completed') return t.approved ? pill('APPROVED', 'p-grn') : pill('PENDING APPROVAL', 'p-blu');
+  if (t.status === 'completed') return t.approved ? pill('DONE', 'p-grn') : pill('PENDING APPROVAL', 'p-blu');
   return daysBetween(ymd(today()), t.due) < 0 ? pill('OVERDUE', 'p-org') : pill('PENDING', 'p-gry');
 }
 function ic(name) {
@@ -3057,7 +3057,7 @@ function renderClean() {
     if (f === 'weekly') return t.freq === 'W';
     if (f === 'monthly') return t.freq === 'M';
     if (f === 'pending') return t.status === 'pending';
-    if (f === 'done') return t.status === 'completed';
+    if (f === 'done') return t.status === 'completed' && !!t.approved;
     if (f === 'rejected') return t.status === 'rejected';
     if (f === 'approve') return t.status === 'completed' && !t.approved;
     if (f === 'nophoto') return missingPhoto(t);
@@ -3096,7 +3096,7 @@ function renderClean() {
 
   var chips = [['all', 'All ' + all.length], ['weekly', 'Weekly ' + stW.total], ['monthly', 'Monthly ' + stM.total], ['tuesday', 'Tuesday ' + tue.length],
   ['pending', 'Pending ' + st.pending], ['approve', 'To approve ' + (st.done - st.approved)],
-  ['rejected', 'Rejected ' + st.rejected], ['nophoto', 'No photo ' + st.noPhoto], ['done', 'Done ' + st.done]];
+  ['rejected', 'Rejected ' + st.rejected], ['nophoto', 'No photo ' + st.noPhoto], ['done', 'Done ' + st.approved]];
   if (ME.role === 'staff') chips.unshift(['mine', 'My jobs']);
   html += '<div class="chips">' + chips.map(function (c) {
     return '<button class="chip' + (f === c[0] ? ' on' : '') + '" data-a="cfilter" data-x="' + c[0] + '">' + c[1] + '</button>';
