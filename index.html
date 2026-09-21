@@ -3396,6 +3396,10 @@ function renderLabels() {
       '</span><span class="chev">›</span></button>';
   }).join('') : '<div class="empty"><div class="ic">🏷</div>Nothing here</div>') + '</div><div style="height:20px"></div></div>';
   $('#app').innerHTML = html;
+  /* The same form the Expiry page adds with: a label belongs to a product, so
+     there is one record and both pages work from it. Saving goes straight on
+     to printing the label, which is what someone here came to do. */
+  if (!perm().readonly) $('#app').insertAdjacentHTML('beforeend', '<button class="fab" data-a="addProduct">＋ Add Labeling</button>');
   tabbar();
 }
 function appLink() {
