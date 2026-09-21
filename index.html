@@ -3188,13 +3188,13 @@ function taskSheet(id) {
       ? '<button class="btn ok" data-a="markDone" data-x="' + t.id + '">➤ Send</button>'
       : '<button class="btn" style="background:#d3d8d4" data-a="needPhotos">📷 Add a photo first</button>';
   }
-  if (canDo && p.approve && t.status === 'completed' && !t.approved) {
-    body += '<div style="height:10px"></div><div class="btnrow">' +
-      '<button class="btn ok" data-a="approve" data-x="' + t.id + '">Approve</button>' +
-      '<button class="btn no" data-a="rejectAsk" data-x="' + t.id + '">Reject</button></div>';
-  }
-  if (canDo && !p.approve && t.status === 'completed' && !t.approved) {
-    body += '<div class="card sm muted center" style="margin-top:10px">Sent to the Super Admin · waiting for approval</div>';
+  /* Approving happens in Task Review and nowhere else, so there is one queue
+     to work through rather than two places to remember. */
+  if (canDo && t.status === 'completed' && !t.approved) {
+    body += p.approve
+      ? '<div class="card sm muted center" style="margin-top:10px">Waiting for review · approve or reject it in ' +
+        '<button class="linkish b" data-a="mgmtOpen" data-x="review">Task Review</button></div>'
+      : '<div class="card sm muted center" style="margin-top:10px">Sent to the Super Admin · waiting for approval</div>';
   }
   if (canDo && p.approve && t.status !== 'pending') {
     body += '<div style="height:10px"></div><button class="btn sec" data-a="reopen" data-x="' + t.id + '">↺ Re-open task</button>';
