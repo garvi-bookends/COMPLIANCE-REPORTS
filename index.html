@@ -3769,7 +3769,10 @@ function renderUsersSheet(users) {
             : '<select class="inp" style="width:118px;min-height:42px;font-size:12.5px;padding:6px 8px" data-a="chrole" data-x="' + u.id + '">' +
               assignableRoles().map(function (k) { return '<option value="' + k + '"' + (k === u.role ? ' selected' : '') + '>' + ROLES[k].label + '</option>'; }).join('') +
               '</select>' +
-              '<button class="iconbtn" style="background:#eef0ee;color:var(--ink);width:38px;height:38px;font-size:15px" data-a="resetPw" data-x="' + u.id + '">🔑</button>' +
+              /* Only the Super Admin may set someone else's password, so the
+                 key is not offered to the other admins — the server would
+                 refuse it anyway. */
+              (perm().superadmin ? '<button class="iconbtn" style="background:#eef0ee;color:var(--ink);width:38px;height:38px;font-size:15px" data-a="resetPw" data-x="' + u.id + '">🔑</button>' : '') +
               (u.id === ME.id ? '' : '<button class="iconbtn" style="background:#f6e7e5;color:var(--red);width:38px;height:38px" data-a="delUser" data-x="' + u.id + '">✕</button>')) +
           '</div>';
       }).join('') + '</div>';
@@ -3883,26 +3886,54 @@ function renderSuperSheet(users) {
   }
 }
 
-/* Sets a new password for one person and shows it once. */
+/* Resetting someone else's password: typed twice, then shown once.
+
+   Twice because it is only shown once afterwards — a typo in a single box
+   would lock the person out with nobody able to read back what was actually
+   set. The password they had is never shown here or anywhere else: only a
+   bcrypt hash of it is stored and it cannot be read back. */
+var RESETPW_ERR = '';
+function resetPwSheet(id, name) {
+  openSheet('Reset password · ' + name,
+    '<div class="card sm muted">They are signed out on every device, and must choose their own password the next time they sign in.</div>' +
+    '<div class="card">' +
+    '<label class="f"><span>New password</span><input class="inp" id="rp_new" type="text" ' +
+      'placeholder="leave blank for ' + h(DEFAULT_PW) + '" autocomplete="new-password" autocapitalize="none" autocorrect="off" spellcheck="false"></label>' +
+    '<label class="f" style="margin-top:12px"><span>Confirm new password</span><input class="inp" id="rp_new2" type="text" ' +
+      'autocomplete="new-password" autocapitalize="none" autocorrect="off" spellcheck="false"></label>' +
+    '<div class="xs muted" style="margin-top:6px">At least ' + MIN_PW_LEN + ' characters. Shown in plain text so you can read it out — it is stored only as an encrypted hash and cannot be recovered afterwards.</div>' +
+    (RESETPW_ERR ? '<div class="card" style="background:#fdecea;border-color:#f6c9c4;margin:12px 0 0"><b class="sm">' + h(RESETPW_ERR) + '</b></div>' : '') +
+    '</div>' +
+    '<div class="btnrow"><button class="btn sec" data-a="closeSheet">Cancel</button>' +
+    '<button class="btn no" data-a="doResetPw" data-x="' + h(id) + '" data-n="' + h(name) + '">Reset Password</button></div>');
+  var f = document.getElementById('rp_new'); if (f) f.focus();
+}
+
 function setPasswordFor(id, name) {
-  askText('New password for ' + name,
-    'Type a temporary password, or leave it blank for <b>' + h(DEFAULT_PW) + '</b>. ' +
-    'They must choose their own the next time they sign in, and are signed out on every device now.',
-    '', 'leave blank for ' + DEFAULT_PW, 'Set password', function (value) {
-      var pw = value || '';
-      if (pw && pw.length < MIN_PW_LEN) { toast('Password must be at least ' + MIN_PW_LEN + ' characters'); return; }
-      Api.post('/api/admin/users/' + encodeURIComponent(id) + '/reset-password', pw ? { password: pw } : {})
-        .then(function (data) {
-          logAct('user', 'New password set for ' + data.user.name, data.user.loc);
-          closeSheet();
-          openSheet('New password set', '<div class="card center"><div style="font-size:40px">🔑</div>' +
+  var g = function (k) { var e = document.getElementById(k); return e ? e.value : ''; };
+  /* Not trimmed: a space can legitimately be part of a password. */
+  var pw = g('rp_new'), pw2 = g('rp_new2');
+
+  function stop(msg) { RESETPW_ERR = msg; closeSheet(); resetPwSheet(id, name); }
+  if (pw !== pw2) { stop('The two passwords do not match'); return; }
+  if (pw && pw.length < MIN_PW_LEN) { stop('Password must be at least ' + MIN_PW_LEN + ' characters'); return; }
+
+  RESETPW_ERR = '';
+  Api.post('/api/admin/users/' + encodeURIComponent(id) + '/reset-password', pw ? { password: pw } : {})
+    .then(function (data) {
+      logAct('user', 'New password set for ' + data.user.name, data.user.loc);
+      closeSheet();
+      mgmtLoadUsers(true);
+      openSheet('New password set', '<div class="card center"><div style="font-size:40px">🔑</div>' +
             '<div class="b" style="font-size:18px;margin-top:6px">' + h(data.user.name) + '</div>' +
             '<div class="card" style="margin-top:14px;text-align:left"><div class="xs muted b">USERNAME</div><div class="b" style="font-size:20px">' + h(data.user.uid) + '</div>' +
             '<div class="xs muted b" style="margin-top:10px">TEMPORARY PASSWORD</div><div class="b" style="font-size:20px">' + h(data.password) + '</div></div>' +
             '<div class="sm muted">Give these to ' + h(data.user.name.split(' ')[0]) + ' now — this is the only time the password is shown. ' +
             'They will be asked to choose their own when they sign in.</div></div>' +
-            '<button class="btn" data-a="superDash">Back to User Management</button>');
-        }, function (err) { toast(err.message || 'Could not set the password'); });
+            '<button class="btn" data-a="mgmtOpen" data-x="users">Back to User Management</button>');
+    }, function (err) {
+      RESETPW_ERR = err.message || 'Could not set the password';
+      closeSheet(); resetPwSheet(id, name);
     });
 }
 
@@ -5117,6 +5148,7 @@ document.addEventListener('click', function (ev) {
     case 'mgmtReload': MGMT_ERR = ''; mgmtLoadUsers(true); render(); break;
     case 'editUser': if (!perm().superadmin) break; EDITU_ERR = ''; closeSheet(); userEditSheet(x); break;
     case 'saveUserEdit': saveUserEdit(x); break;
+    case 'doResetPw': setPasswordFor(x, el.getAttribute('data-n') || ''); break;
     case 'toggleUser': if (!perm().superadmin) break; toggleUserAsk(x); break;
     case 'setPwFor': setPasswordFor(x, el.getAttribute('data-n') || 'this person'); break;
     case 'dismissReset': {
@@ -5157,18 +5189,13 @@ document.addEventListener('click', function (ev) {
     case 'cloudSetup': closeSheet(); cloudSheet(); break;
     case 'cloudSync': toast('Syncing…'); Cloud.sync(function (err) { toast(err ? 'Sync failed' : 'Up to date'); closeSheet(); cloudSheet(); retryPhotoUploads(); }); break;
     case 'copyLink': copyText(appLink(), 'App link copied'); break;
+    /* Setting someone else's password is the Super Admin's — the endpoint
+       refuses everyone else, so the button is hidden rather than misleading. */
     case 'resetPw': {
-      var ru = userById(x); if (!ru) break;
-      askConfirm('Reset password?', ru.name + ' will sign in with <b>' + DEFAULT_PW + '</b> and be asked to choose a new one. They will be signed out on every device.', 'Reset', function () {
-        Api.post('/api/admin/users/' + encodeURIComponent(ru.id) + '/reset-password', {}).then(function (data) {
-          logAct('user', 'Password reset for ' + ru.name, ru.loc);
-          Auth.loadRoster().catch(function () { });
-          closeSheet(); usersSheet();
-          toast(ru.name + ' → password ' + data.password);
-        }, function (err) {
-          toast(err.message || 'Could not reset the password');
-        });
-      });
+      if (!perm().superadmin) { toast('Only the Super Admin can reset a password'); break; }
+      var ru = userById(x) || (MGMT_USERS || []).filter(function (u) { return u.id === x; })[0];
+      if (!ru) break;
+      RESETPW_ERR = ''; closeSheet(); resetPwSheet(ru.id, ru.name);
       break;
     }
     case 'logout':

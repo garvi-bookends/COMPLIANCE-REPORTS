@@ -261,7 +261,7 @@ router.patch('/users/:id', validate.validateUserIdParam, validate.validateUpdate
    sign-in. Every existing session for that user is revoked, so a device
    someone left signed in cannot outlive the reset.
    --------------------------------------------------------------------------- */
-router.post('/users/:id/reset-password', validate.validateUserIdParam, validate.validateResetPassword, asyncHandler(function (req, res) {
+router.post('/users/:id/reset-password', requireSuperadmin, validate.validateUserIdParam, validate.validateResetPassword, asyncHandler(function (req, res) {
   var targetId = req.params.id;
 
   if (req.valid.password) {

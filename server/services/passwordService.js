@@ -69,6 +69,9 @@ function validationError(plainPassword) {
   var pw = String(plainPassword == null ? '' : plainPassword);
   var unhashable = hashabilityError(pw);
   if (unhashable) return unhashable;
+  /* Spaces are allowed inside a password, but one made only of them is not
+     a password — it is an empty one that happens to be long enough. */
+  if (!pw.trim().length) return 'Enter a password';
   if (pw.length < config.password.minLength) {
     return 'Password must be at least ' + config.password.minLength + ' characters';
   }
