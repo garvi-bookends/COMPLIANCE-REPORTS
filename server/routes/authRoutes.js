@@ -35,6 +35,9 @@ function publicUser(user) {
     name: user.name,
     role: user.role,
     loc: user.loc,
+    /* The app hides the sections these do not cover, so the signed-in
+       account needs them from the first screen, not after a roster refresh. */
+    jobTypes: user.jobTypes || [],
     mustChange: user.mustChange,
     firstLogin: user.firstLogin,
     lastLogin: user.lastLogin,

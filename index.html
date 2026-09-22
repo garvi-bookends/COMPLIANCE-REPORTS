@@ -2859,15 +2859,19 @@ function renderSimpleHome() {
     '<button class="iconbtn" data-a="me">' + h(initials(ME.name)) + '</button></div></div>';
 
   html += '<div class="wrap">';
-  html += bigBtn('🧽', '#e6f5ee', 'CLEANING', todo.length ? todo.length + ' job' + (todo.length > 1 ? 's' : '') + ' to do' : 'All jobs done ✓', todo.length || '', 'tab', 'clean');
-  html += bigBtn('🏷️', '#fbf6d9', 'LABEL A PRODUCT', 'Take a photo, print the sticker', noLabel || '', 'addProduct', '');
-  html += bigBtn('📅', '#fdf0e0', 'CHECK EXPIRY', (e.expired + e.soon) ? (e.expired ? e.expired + ' expired' : '') + (e.expired && e.soon ? ' · ' : '') + (e.soon ? e.soon + ' expiring soon' : '') : 'Nothing expiring', (e.expired + e.soon) || '', 'tab', 'exp');
-  html += bigBtn('⛶', '#e8f0fd', 'SCAN A LABEL', 'Point the camera at the QR', '', 'scan', '');
+  /* Each card is the door to one section, so it is only drawn when this
+     person's job types reach that section — a card that bounces back to
+     Home is worse than no card. */
+  var canClean = tabAllowed('clean'), canLab = tabAllowed('lab'), canExp = tabAllowed('exp');
+  if (canClean) html += bigBtn('🧽', '#e6f5ee', 'CLEANING', todo.length ? todo.length + ' job' + (todo.length > 1 ? 's' : '') + ' to do' : 'All jobs done ✓', todo.length || '', 'tab', 'clean');
+  if (canLab) html += bigBtn('🏷️', '#fbf6d9', 'LABEL A PRODUCT', 'Take a photo, print the sticker', noLabel || '', 'addProduct', '');
+  if (canExp) html += bigBtn('📅', '#fdf0e0', 'CHECK EXPIRY', (e.expired + e.soon) ? (e.expired ? e.expired + ' expired' : '') + (e.expired && e.soon ? ' · ' : '') + (e.soon ? e.soon + ' expiring soon' : '') : 'Nothing expiring', (e.expired + e.soon) || '', 'tab', 'exp');
+  if (canLab) html += bigBtn('⛶', '#e8f0fd', 'SCAN A LABEL', 'Point the camera at the QR', '', 'scan', '');
 
-  if (todo.length) {
+  if (canClean && todo.length) {
     html += '<div class="sec-t">Jobs still to do this week</div><div class="card pad0">' + todo.slice(0, 8).map(taskRow).join('') + '</div>';
   }
-  if (e.expired) {
+  if (canExp && e.expired) {
     html += '<div class="sec-t">Throw these away 🔴</div><div class="card pad0">' +
       productsFor(loc).filter(function (p) { return expiryState(p.expiry).k === 'expired'; }).slice(0, 6).map(prodRow).join('') + '</div>';
   }

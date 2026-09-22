@@ -169,7 +169,7 @@ function countManagers() {
 function findAuthRecordByUid(uid) {
   var sql =
     'select u.id, u.uid, u.name, u.role, u.loc, u.first_login, u.must_change_password, ' +
-    '       u.last_login_at, u.login_count, u.disabled, u.pending, u.created_at, u.created_by, u.updated_at, ' +
+    '       u.last_login_at, u.login_count, u.disabled, u.pending, u.created_at, u.created_by, u.updated_at, u.job_types, ' +
     '       c.password_hash, c.failed_attempts, c.locked_until ' +
     '  from app_users u ' +
     '  join app_user_credentials c on c.user_id = u.id ' +
