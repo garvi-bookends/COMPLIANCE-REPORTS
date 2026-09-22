@@ -172,6 +172,30 @@ function validateApprove(req, res, next) {
   next();
 }
 
+/* The job types a person works on. An array of bk_job_types ids; that table's
+   own id format is the rule here too, so a typo is refused at the door rather
+   than stored and silently matching nothing. Repeats are dropped instead of
+   being an error — the form cannot produce them, but an API caller can, and
+   the meaning of "cleaning twice" is unambiguous. Whether each id actually
+   exists is checked in the route, which can reach the database. */
+var JOB_TYPE_ID = /^[a-z0-9][a-z0-9-]{0,38}$/;
+var MAX_JOB_TYPES = 40;
+
+function jobTypes(v, label) {
+  if (v === undefined || v === null || v === '') return { ok: true, value: [] };
+  if (!Array.isArray(v)) return { ok: false, error: label + ' must be a list' };
+  if (v.length > MAX_JOB_TYPES) return { ok: false, error: label + ': too many at once' };
+  var out = [];
+  for (var i = 0; i < v.length; i++) {
+    if (typeof v[i] !== 'string') return { ok: false, error: label + ' must be a list of job type ids' };
+    var id = v[i].trim().toLowerCase();
+    if (!id) continue;
+    if (!JOB_TYPE_ID.test(id)) return { ok: false, error: 'That is not a job type id: ' + v[i] };
+    if (out.indexOf(id) === -1) out.push(id);
+  }
+  return { ok: true, value: out };
+}
+
 function validateCreateUser(req, res, next) {
   var body = req.body || {};
 
@@ -210,6 +234,9 @@ function validateCreateUser(req, res, next) {
   var em = email(body.email, 'Email');
   if (!em.ok) return fail(res, em.error);
 
+  var jt = jobTypes(body.jobTypes, 'Job types');
+  if (!jt.ok) return fail(res, jt.error);
+
   req.valid = {
     name: name.value,
     uid: u.value,
@@ -217,7 +244,8 @@ function validateCreateUser(req, res, next) {
     loc: loc.value || null,
     password: pw.value,
     disabled: dis.value,
-    email: em.value
+    email: em.value,
+    jobTypes: jt.value
   };
   next();
 }
@@ -250,6 +278,11 @@ function validateUpdateUser(req, res, next) {
     var d = bool(body.disabled, 'Disabled');
     if (!d.ok) return fail(res, d.error);
     out.disabled = d.value;
+  }
+  if (body.jobTypes !== undefined) {
+    var jt2 = jobTypes(body.jobTypes, 'Job types');
+    if (!jt2.ok) return fail(res, jt2.error);
+    out.jobTypes = jt2.value;
   }
 
   if (!Object.keys(out).length) return fail(res, 'Nothing to update');

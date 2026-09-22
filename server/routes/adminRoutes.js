@@ -42,6 +42,22 @@ function protectsSuperadmin(req, res, target) {
   return false;
 }
 
+/* A job type id that does not exist would quietly narrow an account to nothing
+   — the person would sign in to find their work gone, with no error anywhere.
+   The format is already checked in validate.js; this checks the ids are real.
+   The empty list means "not restricted" and needs no lookup. */
+function assertJobTypesExist(ids) {
+  if (!ids || !ids.length) return Promise.resolve();
+  return db.query('select id from bk_job_types where id = any($1::text[])', [ids]).then(function (r) {
+    var known = r.rows.map(function (x) { return x.id; });
+    var missing = ids.filter(function (id) { return known.indexOf(id) === -1; });
+    if (!missing.length) return;
+    var err = new Error('There is no job type called "' + missing[0] + '"');
+    err.status = 400; err.code = 'UNKNOWN_JOB_TYPE'; err.expected = true;
+    throw err;
+  });
+}
+
 /* Everything below this line needs a signed-in manager. */
 router.use(requireAuth, requireManager);
 
@@ -55,6 +71,7 @@ function adminUser(user) {
     role: user.role,
     loc: user.loc,
     email: user.email || null,
+    jobTypes: user.jobTypes || [],
     mustChange: user.mustChange,
     firstLogin: user.firstLogin,
     lastLogin: user.lastLogin,
@@ -116,7 +133,7 @@ router.post('/users', validate.validateCreateUser, asyncHandler(function (req, r
     if (weak) return res.status(400).json({ error: weak, code: 'WEAK_PASSWORD' });
   }
 
-  return Promise.resolve()
+  return assertJobTypesExist(input.jobTypes)
     .then(function () {
       if (input.uid) return input.uid;
       return userModel.listUids().then(function (taken) {
@@ -140,6 +157,7 @@ router.post('/users', validate.validateCreateUser, asyncHandler(function (req, r
             mustChange: true,          // forced to choose their own on first sign-in
             disabled: input.disabled,
             email: input.email,
+            jobTypes: input.jobTypes,
             createdBy: req.auth.id
           });
         });
@@ -244,7 +262,9 @@ router.patch('/users/:id', validate.validateUserIdParam, validate.validateUpdate
     return applyPatch();
 
     function applyPatch() {
-      return userModel.updateProfile(targetId, patch).then(function (user) {
+      return assertJobTypesExist(patch.jobTypes)
+        .then(function () { return userModel.updateProfile(targetId, patch); })
+        .then(function (user) {
         console.log('[admin] ' + req.auth.uid + ' updated user ' + user.uid + ': ' + JSON.stringify(patch));
         res.json({ user: adminUser(user) });
       });

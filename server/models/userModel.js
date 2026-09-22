@@ -21,7 +21,7 @@ var crypto = require('crypto');
 
 var PROFILE_COLUMNS =
   'id, uid, name, role, loc, first_login, must_change_password, ' +
-  'last_login_at, login_count, disabled, pending, reset_requested_at, created_at, created_by, updated_at, email';
+  'last_login_at, login_count, disabled, pending, reset_requested_at, created_at, created_by, updated_at, email, job_types';
 
 var SUPERADMIN = 'superadmin';
 
@@ -44,6 +44,21 @@ var ALL_LOCATION_ROLES = [SUPERADMIN, 'exec', 'aexec', 'admin', 'hok', 'auditor'
    Shaping
    -------------------------------------------------------------------------- */
 
+/* The job types on a row, as a plain array of ids with no blanks and no
+   repeats. Anything stored by an older or confused writer — null, a bare
+   string, a number in the list — comes back as an empty array, which the rest
+   of the app reads as "not restricted". */
+function normaliseJobTypes(v) {
+  if (!Array.isArray(v)) return [];
+  var out = [];
+  v.forEach(function (x) {
+    if (typeof x !== 'string') return;
+    var id = x.trim().toLowerCase();
+    if (id && out.indexOf(id) === -1) out.push(id);
+  });
+  return out;
+}
+
 /* Database row -> the object the frontend expects. Timestamps become epoch
    milliseconds because the existing UI formats them with Date(ms). */
 function toAppUser(row) {
@@ -55,6 +70,7 @@ function toAppUser(row) {
     role: row.role,
     loc: row.loc,
     email: row.email || null,
+    jobTypes: normaliseJobTypes(row.job_types),
     mustChange: row.must_change_password,
     firstLogin: row.first_login,
     lastLogin: row.last_login_at ? new Date(row.last_login_at).getTime() : null,
@@ -77,6 +93,7 @@ function toRosterUser(row) {
     name: row.name,
     role: row.role,
     loc: row.loc,
+    jobTypes: normaliseJobTypes(row.job_types),
     _u: new Date(row.updated_at).getTime()
   };
 }
@@ -218,8 +235,8 @@ function createUser(fields) {
 
   return db.transaction(function (client) {
     return client.query(
-      'insert into app_users (id, uid, name, role, loc, first_login, must_change_password, created_by, pending, disabled, email) ' +
-      'values ($1, $2, $3, $4, $5, true, $6, $7, $8, $9, $10) ' +
+      'insert into app_users (id, uid, name, role, loc, first_login, must_change_password, created_by, pending, disabled, email, job_types) ' +
+      'values ($1, $2, $3, $4, $5, true, $6, $7, $8, $9, $10, $11::jsonb) ' +
       'returning ' + PROFILE_COLUMNS,
       [id, uid, String(fields.name).trim(), role, loc,
         fields.mustChange === undefined ? true : !!fields.mustChange,
@@ -228,7 +245,10 @@ function createUser(fields) {
         /* An account may be created already switched off — someone starting
            next week, set up in advance. */
         !!fields.disabled,
-        fields.email || null]
+        fields.email || null,
+        /* null, not [], for "no restriction": the column reads the same either
+           way, and null is what every existing row already holds. */
+        normaliseJobTypes(fields.jobTypes).length ? JSON.stringify(normaliseJobTypes(fields.jobTypes)) : null]
     ).then(function (r) {
       return client.query(
         'insert into app_user_credentials (user_id, password_hash) values ($1, $2)',
@@ -303,6 +323,15 @@ function updateProfile(userId, patch) {
   if (patch.disabled !== undefined) { sets.push('disabled = $' + i++); params.push(!!patch.disabled); }
   /* An empty address clears it, rather than storing a blank string. */
   if (patch.email !== undefined) { sets.push('email = $' + i++); params.push(patch.email || null); }
+
+  /* The whole set is replaced by what was sent, which is how removing one job
+     type without touching the others works: the form sends the list as it now
+     stands. An empty list clears the restriction rather than storing []. */
+  if (patch.jobTypes !== undefined) {
+    var jt = normaliseJobTypes(patch.jobTypes);
+    sets.push('job_types = $' + i++ + '::jsonb');
+    params.push(jt.length ? JSON.stringify(jt) : null);
+  }
 
   if (!sets.length) return findById(userId);
 
@@ -403,6 +432,7 @@ module.exports = {
 
   toAppUser: toAppUser,
   toRosterUser: toRosterUser,
+  normaliseJobTypes: normaliseJobTypes,
   normaliseUid: normaliseUid,
   newUserId: newUserId,
   suggestUid: suggestUid,

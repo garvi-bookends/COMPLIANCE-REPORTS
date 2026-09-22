@@ -935,6 +935,7 @@ function mergeRosterEntry(existing, incoming) {
   out.name = incoming.name;
   out.role = incoming.role;
   out.loc = incoming.loc;
+  if (incoming.jobTypes !== undefined) out.jobTypes = incoming.jobTypes || [];
   if (incoming.mustChange !== undefined) out.mustChange = incoming.mustChange;
   if (incoming.lastLogin !== undefined) out.lastLogin = incoming.lastLogin;
   if (incoming.createdAt !== undefined) out.createdAt = incoming.createdAt;
@@ -2034,7 +2035,7 @@ function cnameHtml(tk, text, cls) { return cellEdit(tk, 'name', text, cls); }
 
 /* What each field offers when it is opened. A list means a dropdown; no list
    means a free-text box. */
-function editChoices(field) {
+function editChoices(field, typeId) {
   if (field === 'freq') return [['D', 'Daily'], ['W', 'Weekly'], ['M', 'Monthly']];
   if (field === 'day') {
     return [['', 'Spread across the week']].concat(DAY_NAMES.map(function (d, i) { return [String(i), 'Every ' + d]; }));
@@ -2042,9 +2043,9 @@ function editChoices(field) {
 
   if (field === 'status') return [['active', 'Active — scheduled'], ['off', 'Off — not scheduled']];
   if (field === 'assignedTo') {
-    /* Anyone who does the work. The Auditor is read-only, so never offered. */
-    return [['', 'Anyone on shift']].concat((DB.users || [])
-      .filter(function (u) { return u.role !== 'auditor'; })
+    /* The people who work on this job type. The Auditor is read-only, so is
+       never offered; an account with no job types set is not restricted. */
+    return [['', 'Anyone on shift']].concat(peopleForType(typeId)
       .map(function (u) {
         return [u.id, u.name + ' · ' + (ROLES[u.role] ? ROLES[u.role].label : u.role) +
           (u.loc ? ' · ' + lname(u.loc) : '')];
@@ -2076,7 +2077,7 @@ function startInlineEdit(el) {
   INLINE_BUSY = true;
 
   var current = currentValue(job, field), done = false;
-  var choices = editChoices(field), ctrl;
+  var choices = editChoices(field, taskJobType(job)), ctrl;
 
   if (choices) {
     ctrl = document.createElement('select');
@@ -2138,7 +2139,7 @@ function saveCleanField(tk, field, value, current) {
   } else {
     if (value === current) { render(); return; }
     body[field] = field === 'day' ? (value === '' ? null : Number(value)) : (value === '' ? null : value);
-    var ch = (editChoices(field) || []).filter(function (c) { return c[0] === value; })[0];
+    var ch = (editChoices(field, taskJobType(jobFor(tk) || {})) || []).filter(function (c) { return c[0] === value; })[0];
     label = ch ? ch[1] : value;
   }
 
@@ -2236,6 +2237,84 @@ function wireLocChecks(pre) {
   box.addEventListener('change', function (e) {
     var lab = e.target.closest('.lchk');
     if (lab) lab.className = 'lchk' + (e.target.checked ? ' on' : '');
+  });
+}
+
+/* ---------------------------------------------------------------------------
+   The job types a person works on — the control shared by the Add User and
+   Edit User forms. Built on the same checkbox set as the outlet picker so it
+   looks and behaves like the rest of the app.
+
+   The chips above the boxes are a read-out of what is ticked, not a second
+   control: with a dozen job types a list of ticks is hard to read back, and
+   the chips answer "what does this person do?" at a glance.
+
+   Nothing ticked is not an error. It means the account is not restricted —
+   which is what every account created before this feature is, and what they
+   must go on being.
+   --------------------------------------------------------------------------- */
+function jobTypeChecks(pre, chosen) {
+  var on = {}; (chosen || []).forEach(function (id) { on[id] = 1; });
+  /* A switched-off job type is still shown when this person already has it,
+     so saving the form cannot quietly strip it. */
+  var list = jobTypes().filter(function (t) { return t.active !== false || on[t.id]; });
+  if (!list.length) {
+    return '<div class="sm muted" id="' + pre + '_types">No job types exist yet. Add one in Job Management.</div>';
+  }
+  return '<div id="' + pre + '_chips" class="chips" style="margin:2px 0 10px">' + jobTypeChipsHTML(chosen) + '</div>' +
+    '<div class="lchks" id="' + pre + '_types">' + list.map(function (t) {
+      return '<label class="lchk' + (on[t.id] ? ' on' : '') + '"><input type="checkbox" value="' + h(t.id) + '"' +
+        (on[t.id] ? ' checked' : '') + '><span>' + h(t.name) + (t.active === false ? ' (off)' : '') + '</span></label>';
+    }).join('') + '</div>' +
+    '<div class="xs muted" style="margin-top:8px">Tick everything this person works on. Leave them all unticked and they can work on every job type.</div>';
+}
+/* Who may be given work of this job type. An account with no job types set is
+   not restricted, so it stays in the list — that is every account created
+   before this feature, and dropping them would empty the picker overnight.
+   The Auditor is read-only and is never offered, as before. */
+function worksOnType(u, typeId) {
+  if (!u || u.role === 'auditor') return false;
+  if (!typeId) return true;
+  var ids = u.jobTypes || [];
+  return !ids.length || ids.indexOf(typeId) > -1;
+}
+function peopleForType(typeId) {
+  var all = (DB.users || []).filter(function (u) { return u.role !== 'auditor'; });
+  /* Nobody has been given this job type yet, so narrowing would leave an empty
+     picker and no way to give the work out. Everyone is listed instead, and
+     the form says why rather than looking like a decision. */
+  if (!typeId || nobodyHasType(typeId)) return all;
+  return all.filter(function (u) { return worksOnType(u, typeId); });
+}
+/* True when nobody has been given this job type explicitly — the picker is
+   then falling back to everyone, and says so rather than looking decided. */
+function nobodyHasType(typeId) {
+  if (!typeId) return false;
+  return !(DB.users || []).some(function (u) {
+    return u.role !== 'auditor' && (u.jobTypes || []).indexOf(typeId) > -1;
+  });
+}
+function jobTypeChipsHTML(chosen) {
+  if (!chosen || !chosen.length) return '<span class="xs muted">Every job type</span>';
+  return chosen.map(function (id) { return '<span class="chip on">' + h(jobTypeName(id)) + '</span>'; }).join('');
+}
+function readJobTypeChecks(pre) {
+  var box = document.getElementById(pre + '_types');
+  if (!box) return [];
+  var out = [];
+  Array.prototype.slice.call(box.querySelectorAll('input:checked')).forEach(function (i) {
+    if (out.indexOf(i.value) === -1) out.push(i.value);   /* never the same one twice */
+  });
+  return out;
+}
+function wireJobTypeChecks(pre) {
+  var box = document.getElementById(pre + '_types');
+  if (!box) return;
+  box.addEventListener('change', function (e) {
+    var lab = e.target.closest ? e.target.closest('.lchk') : null;
+    if (lab) lab.className = 'lchk' + (e.target.checked ? ' on' : '');
+    var chips = document.getElementById(pre + '_chips');
+    if (chips) chips.innerHTML = jobTypeChipsHTML(readJobTypeChecks(pre));
   });
 }
 
@@ -2447,9 +2526,29 @@ function header(title, sub) {
     '<button class="iconbtn" data-a="me">' + h(initials(ME.name)) + '</button>' +
     '</div>' + locSel + '</div>';
 }
+/* Which section a job type's work is done in. The app has always had a
+   Cleaning, a Labelling and an Expiry Date screen, and the three built-in job
+   types are the work done on them. A job type someone invents has no screen of
+   its own, so it hides nothing — it decides who gets assigned, and its tasks
+   are reviewed in Task Review. */
+var TYPE_TAB = { cleaning: 'clean', labelling: 'lab', labeling: 'lab', 'expiry-date': 'exp', expiry: 'exp' };
+function myJobTypes() { return (ME && ME.jobTypes) || []; }
+/* Home and Reports are not job types — one is where the day starts, the other
+   where it is reviewed — so neither is ever hidden. */
+function tabAllowed(tab) {
+  if (tab === 'home' || tab === 'rep' || tab === 'manage') return true;
+  if (!ME || perm().superadmin) return true;
+  var ids = myJobTypes();
+  if (!ids.length) return true;                    /* nothing set = not restricted */
+  var gated = {};
+  Object.keys(TYPE_TAB).forEach(function (k) { gated[TYPE_TAB[k]] = 1; });
+  if (!gated[tab]) return true;                    /* no job type claims this tab */
+  return ids.some(function (id) { return TYPE_TAB[id] === tab; });
+}
 function tabbar() {
   var items = [['home', 'Home', 'home'], ['clean', 'Cleaning', 'clean'], ['exp', 'Expiry', 'exp'], ['lab', 'Labels', 'lab'], ['rep', 'Reports', 'rep']];
   if (ME.role === 'staff') items = items.slice(0, 4);
+  items = items.filter(function (t) { return tabAllowed(t[0]); });
 
   var nav = items.map(function (t) {
     return '<button class="tab' + (S.tab === t[0] ? ' on' : '') + '" data-a="tab" data-x="' + t[0] + '">' + ic(t[2]) + '<span>' + t[1] + '</span></button>';
@@ -2877,15 +2976,19 @@ function renderHome() {
   html += '</div></div>';
   /* quick actions */
   html += '<div class="sec-t">Quick actions</div>';
-  html += '<div class="btnrow" style="margin-bottom:10px">';
-  if (!p.readonly) html += '<button class="btn" data-a="tab" data-x="clean">✓ Do a clean</button>' +
-    '<button class="btn sec" data-a="addProduct">＋ Add product</button>';
-  else html += '<button class="btn sec" data-a="tab" data-x="rep">📄 Open reports</button>';
-  html += '</div>';
-  html += '<div class="btnrow">' +
-    '<button class="btn sec" data-a="scan">⛶ Scan label QR</button>' +
-    (p.approve ? '<button class="btn sec" data-a="tab" data-x="clean">☑ Approvals (' + pendingApprovals().length + ')</button>' : '<button class="btn sec" data-a="tab" data-x="lab">🏷 Print label</button>') +
-    '</div>';
+  var quick = [];
+  if (!p.readonly) {
+    if (tabAllowed('clean')) quick.push('<button class="btn" data-a="tab" data-x="clean">✓ Do a clean</button>');
+    if (tabAllowed('exp')) quick.push('<button class="btn sec" data-a="addProduct">＋ Add product</button>');
+  }
+  if (!quick.length) quick.push('<button class="btn sec" data-a="tab" data-x="rep">📄 Open reports</button>');
+  html += '<div class="btnrow" style="margin-bottom:10px">' + quick.join('') + '</div>';
+
+  var quick2 = [];
+  if (tabAllowed('lab')) quick2.push('<button class="btn sec" data-a="scan">⛶ Scan label QR</button>');
+  if (p.approve && tabAllowed('clean')) quick2.push('<button class="btn sec" data-a="tab" data-x="clean">☑ Approvals (' + pendingApprovals().length + ')</button>');
+  else if (!p.approve && tabAllowed('lab')) quick2.push('<button class="btn sec" data-a="tab" data-x="lab">🏷 Print label</button>');
+  if (quick2.length) html += '<div class="btnrow">' + quick2.join('') + '</div>';
 
   /* location league table */
   if (p.all) {
@@ -4082,7 +4185,7 @@ function addUserSheet() {
     (NEWU_ERR ? '<div class="card" style="background:#fdecea;border-color:#f6c9c4;margin:0 0 12px"><b class="sm">' + h(NEWU_ERR) + '</b></div>' : '') +
     '</div>' +
     '<div class="card sm muted">They must choose their own password the first time they sign in, whichever one you set here.</div>' +
-    '<div class="card sm muted">Job type and the specific services this person is responsible for are set in Job Management. Until then they can work on every service at their kitchen.</div>' +
+    '<div class="sec-t">Job Types</div><div class="card">' + jobTypeChecks('u', []) + '</div>' +
     '<button class="btn" data-a="saveUser">Create user</button>');
   var n = document.getElementById('u_name');
   n.addEventListener('input', function () {
@@ -4090,6 +4193,7 @@ function addUserSheet() {
     if (!uidF.dataset.touched) uidF.value = makeUid(n.value || '', DB.users);
   });
   document.getElementById('u_uid').addEventListener('input', function () { this.dataset.touched = '1'; });
+  wireJobTypeChecks('u');
 }
 
 /* Creates the account through the admin API (req 1).
@@ -4111,6 +4215,8 @@ function saveUser() {
   var emailEl = document.getElementById('u_email');
   var statusEl = document.getElementById('u_status');
   var status = statusEl ? statusEl.value : 'active';
+  /* Read while the form is still on screen: the error paths below rebuild it. */
+  var picked = readJobTypeChecks('u');
 
   if (!name) { NEWU_ERR = 'Enter a name'; closeSheet(); addUserSheet(); return; }
   /* Caught here so the admin is not left waiting on a round trip for an
@@ -4131,7 +4237,8 @@ function saveUser() {
     loc: ROLES[role].all ? null : loc,
     password: pw || undefined,    /* omitted -> the server uses DEFAULT_PASSWORD */
     disabled: status === 'disabled',
-    email: emailEl ? emailEl.value.trim() : ''
+    email: emailEl ? emailEl.value.trim() : '',
+    jobTypes: picked
   }).then(function (data) {
     NEWU_BUSY = false;
     NEWU_ERR = '';
@@ -4530,14 +4637,17 @@ function mgmtLoadUsers(force) {
   });
 }
 
-/* What this person can work on today. Per-user job assignment is not built
-   yet, so everyone works on every service at their kitchen — say so plainly
-   rather than showing a number that pretends to be an assignment. */
-function assignedJobsLabel(u) {
+/* What this person works on. This column used to show a count of every
+   service at their kitchen, which was not an assignment at all — it said the
+   same thing for everyone. Now it shows the job types they were actually
+   given, and 'every job type' when they were given none. */
+function jobTypesLabel(u) {
   if (u.pending) return '—';
-  var all = ROLES[u.role] && ROLES[u.role].all;
-  var n = checklistJobs(null, all ? null : u.loc).length;
-  return n + ' service' + (n === 1 ? '' : 's') + ' · ' + (all ? 'all kitchens' : h(lname(u.loc)));
+  var ids = (u.jobTypes || []).filter(function (id) { return !!id; });
+  if (!ids.length) return '<span class="muted">Every job type</span>';
+  return ids.map(function (id) {
+    return '<span class="chip on" style="margin:0 4px 4px 0">' + h(jobTypeName(id)) + '</span>';
+  }).join('');
 }
 function userStatus(u) {
   if (u.pending) return { label: 'PENDING', cls: 'p-org' };
@@ -4596,7 +4706,7 @@ function renderUserManagement() {
   });
 
   html += '<div class="sec-t">Accounts · ' + shown.length + (shown.length !== users.length ? ' of ' + users.length : '') + '</div>';
-  html += mgTable(['Name', 'Email', 'Role', 'Restaurant', 'Assigned Jobs', 'Status', 'Actions'],
+  html += mgTable(['Name', 'Email', 'Role', 'Restaurant', 'Job Types', 'Status', 'Actions'],
     shown.map(function (u) {
       var st = userStatus(u);
       var isSuper = ROLES[u.role] && ROLES[u.role].superadmin;
@@ -4607,7 +4717,7 @@ function renderUserManagement() {
         '<td class="sm">' + (u.email ? h(u.email) : '<span class="muted">—</span>') + '</td>' +
         '<td>' + h(ROLES[u.role] ? ROLES[u.role].label : u.role) + '</td>' +
         '<td>' + (ROLES[u.role] && ROLES[u.role].all ? '<span class="muted">All ' + LOCATIONS.length + '</span>' : h(lname(u.loc))) + '</td>' +
-        '<td class="sm muted">' + assignedJobsLabel(u) + '</td>' +
+        '<td class="sm">' + jobTypesLabel(u) + '</td>' +
         '<td>' + pill(st.label, st.cls) + '</td>' +
         '<td class="nowrap">' +
           (u.pending
@@ -4662,8 +4772,10 @@ function userEditSheet(id) {
     '</select></label>' +
     (EDITU_ERR ? '<div class="card" style="background:#fdecea;border-color:#f6c9c4;margin:12px 0 0"><b class="sm">' + h(EDITU_ERR) + '</b></div>' : '') +
     '</div>' +
+    '<div class="sec-t">Job Types</div><div class="card">' + jobTypeChecks('e', (u.jobTypes || []).slice()) + '</div>' +
     '<div class="btnrow"><button class="btn sec" data-a="closeSheet">Cancel</button>' +
     '<button class="btn ok" data-a="saveUserEdit" data-x="' + h(u.id) + '">Save Changes</button></div>');
+  wireJobTypeChecks('e');
 }
 
 function saveUserEdit(id) {
@@ -4674,7 +4786,7 @@ function saveUserEdit(id) {
   if (name.length < 2) { EDITU_ERR = 'Enter a full name'; closeSheet(); userEditSheet(id); return; }
 
   var isSuper = ROLES[u.role] && ROLES[u.role].superadmin;
-  var patch = { name: name, email: g('e_email').trim() };
+  var patch = { name: name, email: g('e_email').trim(), jobTypes: readJobTypeChecks('e') };
   if (!isSuper) {
     patch.role = g('e_role');
     patch.loc = ROLES[patch.role] && ROLES[patch.role].all ? null : (g('e_loc') || null);
@@ -4824,7 +4936,7 @@ function renderTypeServices() {
 
   /* Who a job belongs to. The Super Admin gives jobs out here, so the table
      narrows to one person rather than always showing every service. */
-  var people = (DB.users || []).filter(function (u) { return u.role !== 'auditor'; });
+  var people = peopleForType(t.id);
   html += '<label class="f" style="margin-top:10px"><span>Assigned to</span>' +
     '<select class="inp" id="mg_who">' +
     '<option value=""' + (MGMT_WHO === '' ? ' selected' : '') + '>Everyone · all ' + list.length + '</option>' +
@@ -4999,7 +5111,7 @@ function addJobForm(presetType) {
   if (!types.length) { toast('Add a job type first'); jobTypeForm(null); return; }
   var typeId = presetType || (types[0] && types[0].id);
 
-  var roster = (DB.users || []).filter(function (u) { return u.role !== 'auditor'; });
+  var roster = peopleForType(typeId);
 
   openSheet('Add Job',
     '<div class="card">' +
@@ -5024,7 +5136,10 @@ function addJobForm(presetType) {
       return '<option value="' + h(u.id) + '" data-loc="' + h(u.loc || '') + '">' + h(u.name) +
         ' · ' + h(ROLES[u.role] ? ROLES[u.role].label : u.role) +
         ' · ' + h(u.loc ? lname(u.loc) : 'All kitchens') + '</option>';
-    }).join('') + '</select></label>' +
+    }).join('') + '</select>' +
+    '<div class="xs muted" style="margin-top:6px">' + (nobodyHasType(typeId)
+      ? '⚠️ Nobody is set to ' + h(jobTypeName(typeId)) + ' yet, so everyone is listed. Set job types in User Management.'
+      : 'Only people set to ' + h(jobTypeName(typeId)) + ' are listed.') + '</div></label>' +
 
     '<div class="grid2" style="margin-top:12px">' +
     '<label class="f"><span>5 · Date</span><input class="inp" id="aj_date" type="date" value="' + ymd(today()) + '"></label>' +
@@ -5191,6 +5306,10 @@ function render() {
   if (S.loc && S.loc !== 'ALL' && !locById(S.loc)) S.loc = null;
   if (S.loc === 'ALL' && !perm().all) S.loc = ME.loc || visibleLocations()[0].id;
   if (S.tab !== 'home' && S.tab !== 'rep' && S.tab !== 'manage' && S.loc === 'ALL') S.loc = visibleLocations()[0].id;
+  /* A section this account's job types do not cover is not reachable, however
+     it was arrived at — a stale tab from the last session, a deep link, an old
+     button. The nav hides it; this is what makes it true. */
+  if (!tabAllowed(S.tab)) S.tab = 'home';
   if (S.tab === 'manage') renderManage();
   else if (S.tab === 'home') renderHome();
   else if (S.tab === 'clean') renderClean();

@@ -46,6 +46,14 @@ alter table app_users add column if not exists reset_requested_at timestamptz;
 -- stays the username, so adding this cannot lock anybody out.
 alter table app_users add column if not exists email text;
 
+-- The job types a person works on, as an array of bk_job_types ids:
+--   ["cleaning","labelling"]
+-- null or [] means "not restricted" — the account works on every job type, so
+-- every user that existed before this column keeps working exactly as it did.
+-- A set here both narrows the sections the person sees and decides whether
+-- they are offered when a task of that type is being assigned.
+alter table app_users add column if not exists job_types jsonb;
+
 -- Super Admin: the one account that approves self sign-ups.
 -- The role list is widened by dropping and re-adding the check, so an existing
 -- database picks it up on the next migrate.
@@ -259,6 +267,15 @@ create index if not exists bk_job_types_upd on bk_job_types (updated_at);
 -- Cleaning always exists: the built-in checklist belongs to it.
 insert into bk_job_types (id, name, description, builtin, sort)
 values ('cleaning', 'Cleaning', 'Kitchen deep-clean checklist — weekly and monthly jobs', true, 10)
+on conflict (id) do nothing;
+
+-- Labelling and expiry checking are screens the app has always had, so there
+-- is a job type for each: without them a person could not be given "labelling"
+-- as their work. Built in for the same reason cleaning is — the section exists
+-- whether or not anyone wants the type, so it is switched off, never deleted.
+insert into bk_job_types (id, name, description, builtin, sort)
+values ('labelling',   'Labelling',   'Writing and applying product labels', true, 20),
+       ('expiry-date', 'Expiry Date', 'Checking use-by dates and withdrawing expired stock', true, 30)
 on conflict (id) do nothing;
 
 -- Which job type a service belongs to. Everything already recorded is
