@@ -12764,7 +12764,7 @@ function header(title, sub) {
    types are the work done on them. A job type someone invents has no screen of
    its own, so it hides nothing — it decides who gets assigned, and its tasks
    are reviewed in Task Review. */
-var TYPE_TAB = { cleaning: 'clean', labelling: 'lab', labeling: 'lab', 'expiry-date': 'exp', expiry: 'exp' };
+var TYPE_TAB = { cleaning: 'clean', labelling: 'lab', labeling: 'lab' };
 function myJobTypes() { return (ME && ME.jobTypes) || []; }
 /* Home and Reports are not job types — one is where the day starts, the other
    where it is reviewed — so neither is ever hidden. */
@@ -15213,7 +15213,6 @@ function servicesOfType(id, loc) {
    there showed a 0 that was true and useless. */
 function typeCount(id) {
   if (id === 'labelling') return { n: DB.products.length, what: DB.products.length === 1 ? 'label' : 'labels' };
-  if (id === 'expiry-date') return { n: DB.products.length, what: DB.products.length === 1 ? 'item' : 'items' };
   var n = servicesOfType(id, null).length;
   return { n: n, what: n === 1 ? 'service' : 'services' };
 }
@@ -15356,7 +15355,7 @@ function renderTypeProducts(t, kind) {
 function renderTypeServices() {
   var t = jobTypeById(S.manageType);
   if (!t) { S.manage = 'jobs'; render(); return; }
-  if (t.id === 'labelling' || t.id === 'expiry-date') { renderTypeProducts(t, t.id); return; }
+  if (t.id === 'labelling') { renderTypeProducts(t, t.id); return; }
   var list = allServicesOfType(t.id);
   var needsLocs = list.filter(isAllOutlets);
 

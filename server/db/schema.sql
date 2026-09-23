@@ -269,14 +269,22 @@ insert into bk_job_types (id, name, description, builtin, sort)
 values ('cleaning', 'Cleaning', 'Kitchen deep-clean checklist — weekly and monthly jobs', true, 10)
 on conflict (id) do nothing;
 
--- Labelling and expiry checking are screens the app has always had, so there
--- is a job type for each: without them a person could not be given "labelling"
--- as their work. Built in for the same reason cleaning is — the section exists
--- whether or not anyone wants the type, so it is switched off, never deleted.
+-- Labelling is a screen the app has always had, so there is a job type for it:
+-- without one, a person could not be given "labelling" as their work. Built in
+-- for the same reason cleaning is — the section exists whether or not anyone
+-- wants the type, so it is switched off, never deleted.
 insert into bk_job_types (id, name, description, builtin, sort)
-values ('labelling',   'Labelling',   'Writing and applying product labels', true, 20),
-       ('expiry-date', 'Expiry Date', 'Checking use-by dates and withdrawing expired stock', true, 30)
+values ('labelling', 'Labelling', 'Writing and applying product labels', true, 20)
 on conflict (id) do nothing;
+
+-- Expiry checking is deliberately NOT a job type. It was one briefly and was
+-- taken out: the Expiry Date page stands on its own and nobody is assigned
+-- expiry work the way they are assigned a clean. Removed here as well as from
+-- the seed, so a database that already picked it up drops it on the next
+-- migrate rather than keeping a type nothing can reach.
+delete from bk_job_types where id = 'expiry-date' and not exists (
+  select 1 from bk_checklist where job_type = 'expiry-date'
+);
 
 -- The people a service is given to, as an array of app_users ids:
 --   ["U-A1B2C3","U-D4E5F6"]
