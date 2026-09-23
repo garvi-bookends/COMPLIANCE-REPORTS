@@ -153,6 +153,7 @@ button,input,select,textarea{font:inherit;color:inherit}
 .bar>i{display:block;height:100%;border-radius:6px;background:var(--grn);transition:width .4s}
 .ring{display:block;margin:0 auto}
 .ring .tr{stroke:rgba(255,255,255,.2)}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px;margin-bottom:10px}
 .stat{background:#fff;border:1px solid var(--line);border-radius:14px;padding:12px 10px;text-align:center}
 .stat b{display:block;font-size:24px;line-height:1.1;font-weight:800}
 .stat span{font-size:11px;color:var(--mut);font-weight:700;letter-spacing:.3px;text-transform:uppercase}
@@ -15255,63 +15256,98 @@ function renderJobManagement() {
 /* The services under one job type. For Cleaning these are the checklist jobs
    the app has always generated; for a type the Super Admin added they are
    whatever was set up under it. */
-/* Labelling has no services and never will: nobody schedules "a label" the way
-   they schedule a clean. The work under it is the labels people actually made,
-   so that is what this job type shows — every one of them, across every
-   kitchen, with who made it and whether it was ever applied. */
-function renderTypeLabels(t) {
-  var all = DB.products.slice().sort(function (a, b) { return (b.createdAt || 0) - (a.createdAt || 0); });
-  var missing = all.filter(function (p) { return !p.labelled; });
+/* Labelling and Expiry Date have no services and never will: nobody schedules
+   "a label" or "an expiry date" the way they schedule a clean. The work under
+   both is the same product records — one job type looks at whether the sticker
+   was ever written, the other at how long the food has left — so one screen
+   serves both, told which of the two it is. */
+function renderTypeProducts(t, kind) {
+  var isLab = kind === 'labelling';
+  var all = DB.products.slice().sort(function (a, b) {
+    /* Labels read as a list of what was added; expiry reads as what needs
+       attention first. */
+    return isLab ? (b.createdAt || 0) - (a.createdAt || 0) : parseD(a.expiry) - parseD(b.expiry);
+  });
   var kitchens = {}; all.forEach(function (p) { kitchens[p.loc] = 1; });
+  var missing = all.filter(function (p) { return !p.labelled; });
+  var counts = { active: 0, soon: 0, expired: 0 };
+  all.forEach(function (p) { counts[expiryStatus(p.expiry).k]++; });
+  var noun = isLab ? 'label' : 'item';
 
-  var html = mgHead(t.name.toUpperCase(), 'Job Management · ' + all.length + ' label' + (all.length === 1 ? '' : 's'),
+  var html = mgHead(t.name.toUpperCase(),
+    'Job Management · ' + all.length + ' ' + noun + (all.length === 1 ? '' : 's'),
     ['mgmtJobsBack', 'Job Management']);
-  html += mgStatsRow([
+  html += mgStatsRow(isLab ? [
     [all.length, 'Labels', 'var(--ink)'],
     [all.length - missing.length, 'Applied', 'var(--grn)'],
     [missing.length, 'Not written', missing.length ? 'var(--org)' : 'var(--mut)'],
     [Object.keys(kitchens).length, 'Kitchens', 'var(--ink)']
+  ] : [
+    [all.length, 'Items', 'var(--ink)'],
+    [counts.active, 'Active', 'var(--grn)'],
+    [counts.soon, 'Expiring soon', counts.soon ? 'var(--org)' : 'var(--mut)'],
+    [counts.expired, 'Expired', counts.expired ? 'var(--red)' : 'var(--mut)'],
+    [Object.keys(kitchens).length, 'Kitchens', 'var(--ink)']
   ]);
   if (!t.active) {
     html += '<div class="card sm" style="background:#fdecea;border-color:#f6c9c4;margin-top:12px"><b>This job type is switched off.</b> ' +
-      'Nobody can be given labelling work while it is.</div>';
+      'Nobody can be given ' + h(t.name.toLowerCase()) + ' work while it is.</div>';
   }
-  html += mgSearchBox(MGMT_Q, 'Label, code, kitchen or who added it');
-  html += mgChips([['all', 'All ' + all.length],
-    ['done', 'Applied ' + (all.length - missing.length)],
-    ['missing', 'Not written ' + missing.length]], MGMT_FILTER);
+  html += mgSearchBox(MGMT_Q, (isLab ? 'Label' : 'Item') + ', code, kitchen or who added it');
+  html += mgChips(isLab
+    ? [['all', 'All ' + all.length],
+       ['done', 'Applied ' + (all.length - missing.length)],
+       ['missing', 'Not written ' + missing.length]]
+    : [['all', 'All ' + all.length],
+       ['active', 'Active ' + counts.active],
+       ['soon', 'Expiring soon ' + counts.soon],
+       ['expired', 'Expired ' + counts.expired]], MGMT_FILTER);
 
   var shown = all.filter(function (p) {
-    if (MGMT_FILTER === 'missing' && p.labelled) return false;
-    if (MGMT_FILTER === 'done' && !p.labelled) return false;
+    if (isLab) {
+      if (MGMT_FILTER === 'missing' && p.labelled) return false;
+      if (MGMT_FILTER === 'done' && !p.labelled) return false;
+    } else if (MGMT_FILTER === 'active' || MGMT_FILTER === 'soon' || MGMT_FILTER === 'expired') {
+      if (expiryStatus(p.expiry).k !== MGMT_FILTER) return false;
+    }
     return mgMatches([p.name, labelCode(p), p.cat || '', uname(p.by), lname(p.loc), p.batch || '']);
   });
 
-  html += '<div class="sec-t">Labels · ' + shown.length + (shown.length !== all.length ? ' of ' + all.length : '') + '</div>';
-  html += mgTable(['Label', 'Kitchen', 'Added by', 'Added', 'Use by', 'Status'],
-    shown.map(function (p) {
+  var cols = isLab
+    ? ['Label', 'Kitchen', 'Added by', 'Added', 'Use by', 'Status']
+    : ['Item', 'Kitchen', 'Added by', 'Added', 'Use by', 'Status'];
+  html += '<div class="sec-t">' + (isLab ? 'Labels · ' : 'Items · ') + shown.length +
+    (shown.length !== all.length ? ' of ' + all.length : '') + '</div>';
+  html += mgTable(cols, shown.map(function (p) {
       var st = expiryStatus(p.expiry);
+      var n = Math.abs(st.days), unit = ' day' + (n === 1 ? '' : 's');
+      var left = st.days < 0 ? n + unit + ' ago' : st.days === 0 ? 'today' : n + unit + ' left';
       return '<tr>' +
         '<td><button class="linkish b" data-a="product" data-x="' + h(p.id) + '">' + h(p.name) + '</button>' +
           '<div class="xs muted">' + h(labelCode(p)) + (p.cat ? ' · ' + h(p.cat) : '') + '</div></td>' +
         '<td class="sm">' + h(lname(p.loc)) + '</td>' +
         '<td class="sm">' + h(uname(p.by)) + '</td>' +
         '<td class="sm muted">' + h(p.createdAt ? fmtD(ymd(new Date(p.createdAt))) : '—') + '</td>' +
-        '<td class="sm">' + h(fmtD(p.expiry)) + ' ' + pill(st.label, st.cls) + '</td>' +
-        '<td>' + pill(p.labelled ? 'LABEL OK' : 'NOT WRITTEN', p.labelled ? 'p-grn' : 'p-org') +
-          (p.labelled && p.labelledAt ? '<div class="xs muted">' + h(fmtD(ymd(new Date(p.labelledAt)))) + '</div>' : '') + '</td>' +
+        '<td class="sm">' + h(fmtD(p.expiry)) +
+          (isLab ? ' ' + pill(st.label, st.cls) : '<div class="xs muted">' + h(left) + '</div>') + '</td>' +
+        '<td>' + (isLab
+          ? pill(p.labelled ? 'LABEL OK' : 'NOT WRITTEN', p.labelled ? 'p-grn' : 'p-org') +
+            (p.labelled && p.labelledAt ? '<div class="xs muted">' + h(fmtD(ymd(new Date(p.labelledAt)))) + '</div>' : '')
+          : pill(st.label, st.cls) +
+            (p.labelled ? '' : ' ' + pill('NO LABEL', 'p-gry'))) + '</td>' +
         '</tr>';
-    }), 'Nobody has added a label yet');
+    }), isLab ? 'Nobody has added a label yet' : 'Nothing is being tracked yet');
 
-  html += '<div class="card sm muted" style="margin-top:12px">Every label anyone has added, newest first. Tap a name to open it. ' +
-    'Labels are added on the Labelling page, not here.</div>';
+  html += '<div class="card sm muted" style="margin-top:12px">' +
+    (isLab ? 'Every label anyone has added, newest first.' : 'Everything being tracked, soonest to expire first.') +
+    ' Tap a name to open it. They are added on the ' + h(t.name) + ' page, not here.</div>';
   $('#app').innerHTML = html + '<div style="height:20px"></div></div>';
   mgWireSearch(renderTypeServices);
 }
 function renderTypeServices() {
   var t = jobTypeById(S.manageType);
   if (!t) { S.manage = 'jobs'; render(); return; }
-  if (t.id === 'labelling') { renderTypeLabels(t); return; }
+  if (t.id === 'labelling' || t.id === 'expiry-date') { renderTypeProducts(t, t.id); return; }
   var list = allServicesOfType(t.id);
   var needsLocs = list.filter(isAllOutlets);
 
