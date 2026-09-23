@@ -13675,28 +13675,27 @@ function renderExpiry() {
     return '<button class="chip' + (f === c[0] ? ' on' : '') + '" data-a="efilter" data-x="' + c[0] + '">' + c[1] + '</button>';
   }).join('') + '</div>';
 
-  var readOnly = perm().readonly;
   html += '<div class="sec-t">Items · ' + list.length + (list.length !== ps.length ? ' of ' + ps.length : '') + '</div>';
   html += '<div class="tablewrap"><table class="utable"><thead><tr>' +
-    ['Item', 'Category', 'Expiry date', 'Status', 'Added', 'Actions'].map(function (c) { return '<th>' + c + '</th>'; }).join('') +
+    ['Item', 'MFG date', 'Expiry date', 'Status'].map(function (c) { return '<th>' + c + '</th>'; }).join('') +
     '</tr></thead><tbody>' +
     (list.length ? list.map(function (p) {
       var st = expiryStatus(p.expiry);
+      var n = Math.abs(st.days), unit = ' day' + (n === 1 ? '' : 's');
+      /* Editing and discarding are on the item itself, a tap away — the name
+         opens it. A row of buttons beside every line invited a mis-tap on the
+         delete of a record somebody else was relying on. */
       return '<tr>' +
         '<td><button class="linkish b" data-a="product" data-x="' + h(p.id) + '">' + h(p.name) + '</button>' +
           (isActive(p) ? '' : ' ' + pill('INACTIVE', 'p-gry')) +
-          '<div class="xs muted">' + h(labelCode(p)) + ' · ' + p.qty + ' ' + h(p.unit) + '</div></td>' +
-        '<td class="sm">' + h(p.cat) + '</td>' +
+          '<div class="xs muted">' + h(labelCode(p)) + '</div></td>' +
+        '<td class="sm">' + h(p.opened ? fmtD(p.opened) : '—') + '</td>' +
         '<td class="sm">' + h(fmtD(p.expiry)) +
-          '<div class="xs muted">' + (st.days < 0 ? Math.abs(st.days) + ' days ago' : st.days + ' days left') + '</div></td>' +
+          '<div class="xs muted">' + (st.days < 0 ? n + unit + ' ago' : st.days === 0 ? 'today' : n + unit + ' left') + '</div></td>' +
         '<td>' + pill(st.label, st.cls) + '</td>' +
-        '<td class="sm muted">' + h(p.createdAt ? fmtD(ymd(new Date(p.createdAt))) : '—') + '</td>' +
-        '<td class="nowrap">' + (readOnly ? '<span class="xs muted">view only</span>' :
-          mgBtn('editProduct', p.id, '✏️', 'Edit this item') +
-          mgBtn('delProduct', p.id, '✕', 'Delete this item', 'background:#f6e7e5;color:var(--red)')) + '</td>' +
         '</tr>';
     }).join('')
-      : '<tr><td colspan="6" class="sm muted center" style="padding:18px">' +
+      : '<tr><td colspan="4" class="sm muted center" style="padding:18px">' +
         (q ? 'Nothing matches “' + h(S.q) + '”' : 'No items in this view') + '</td></tr>') +
     '</tbody></table></div>';
   html += '<div style="height:20px"></div></div>';
