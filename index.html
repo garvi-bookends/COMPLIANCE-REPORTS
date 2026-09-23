@@ -13710,16 +13710,14 @@ function productSheet(id) {
   var body = '<div class="card"><div class="row" style="align-items:flex-start">' +
     (p.photo ? '<img src="' + photoSrc(p.photo) + '" style="width:78px;height:78px;border-radius:12px;object-fit:cover">' : '') +
     '<div class="grow"><div class="b" style="font-size:17px;line-height:1.2">' + h(p.name) + '</div>' +
-    '<div class="sm muted">' + h(p.cat) + ' · ' + h(lname(p.loc)) + '</div>' +
+    '<div class="sm muted">' + (p.cat ? h(p.cat) + ' · ' : '') + h(lname(p.loc)) + '</div>' +
     '<div style="margin-top:7px">' + pill(st.emoji + ' ' + (st.k === 'expired' ? 'EXPIRED ' + Math.abs(st.days) + 'd AGO' : st.k === 'safe' ? 'SAFE · ' + st.days + 'd LEFT' : st.label), st.cls) + '</div></div></div>' +
+    /* The three the form asks for, and who added it. The name is the heading
+       above. Everything else this record may carry is on its label, which is
+       one tap away, rather than in a grid of dashes. */
     '<div class="grid2" style="margin-top:14px">' +
-    kv('Label code', labelCode(p)) + kv('Label type', p.type || '—') +
-    kv('Batch number', p.batch) + kv('Quantity', p.qty + ' ' + p.unit) +
-    kv('Start date', fmtD(p.opened)) + kv('Use by', fmtD(p.expiry)) +
-    kv('Storage', p.storage) + kv('Added by', uname(p.by)) +
-    kv('Colour', p.color || '—') + kv('Status', p.status || 'Active') + '</div>' +
-    (p.desc ? '<div class="sm" style="margin-top:10px"><b class="xs muted b" style="text-transform:uppercase;letter-spacing:.4px">Description</b><div>' + h(p.desc) + '</div></div>' : '') +
-    (p.note ? '<div class="sm" style="margin-top:10px"><b class="xs muted b" style="text-transform:uppercase;letter-spacing:.4px">Notes</b><div>' + h(p.note) + '</div></div>' : '') + '</div>';
+    kv('MFG date', fmtD(p.opened)) + kv('Expiry date', fmtD(p.expiry)) +
+    kv('Added by', uname(p.by)) + '</div>';
   if (st.k === 'expired') body += '<div class="card" style="background:#fdecea;border-color:#f6c9c4"><b class="sm">🔴 Do not use. Discard and record wastage.</b></div>';
   body += '<div class="sec-t">Label status</div><div class="card"><div class="row">' +
     '<div class="grow sm b">' + (p.labelled ? '✓ Labelled ' + fmtD(ymd(new Date(p.labelledAt))) : '✕ No label generated yet') + '</div>' +
