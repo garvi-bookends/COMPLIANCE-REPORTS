@@ -11433,7 +11433,16 @@ function cleaningStatsRange(loc, from, to, freq) {
     pct: Math.round((appr / total) * 100)
   };
 }
-function productsFor(loc) { return DB.products.filter(function (p) { return p.loc === loc; }); }
+/* 'ALL' is a real answer here, not a stand-in for a kitchen nobody picked:
+   an account that sees every kitchen gets every kitchen's stock. */
+function productsFor(loc) {
+  if (loc === 'ALL') {
+    var seen = {};
+    visibleLocations().forEach(function (L) { seen[L.id] = 1; });
+    return DB.products.filter(function (p) { return seen[p.loc]; });
+  }
+  return DB.products.filter(function (p) { return p.loc === loc; });
+}
 function expiryStats(loc) {
   /* An Inactive label is stock that has been withdrawn. It stays on the lists
      so it can be found and switched back on, but it is nobody's alert. */
@@ -12429,7 +12438,8 @@ function header(title, sub) {
   var locSel = '';
   if (S.tab !== 'home' || perm().all) {
     locSel = '<div class="locbar"><select id="locsel">' +
-      (perm().all && (S.tab === 'home' || S.tab === 'rep') ? '<option value="ALL"' + (S.loc === 'ALL' ? ' selected' : '') + '>All 8 locations</option>' : '') +
+      /* Offered wherever a page can hold every kitchen at once. */
+      (perm().all && (S.tab === 'home' || S.tab === 'rep' || S.tab === 'exp') ? '<option value="ALL"' + (S.loc === 'ALL' ? ' selected' : '') + '>All 8 locations</option>' : '') +
       ['Surat', 'Ahmedabad'].map(function (city) {
         var ls = vis.filter(function (l) { return l.city === city; });
         if (!ls.length) return '';
@@ -13337,6 +13347,7 @@ function prodRow(p) {
 }
 function renderExpiry() {
   var loc = S.loc, e = expiryStats(loc), ps = productsFor(loc);
+  var manyLocs = loc === 'ALL';
 
   /* The dashboard can send someone here on its own four states; 'month' and
      'safe' both mean "not urgent" in the three this page works in. */
@@ -13347,10 +13358,10 @@ function renderExpiry() {
   ps.forEach(function (p) { counts[expiryStatus(p.expiry).k]++; });
 
   var list = ps.filter(function (p) { return f === 'all' || expiryStatus(p.expiry).k === f; })
-    .filter(function (p) { return !q || (p.name + ' ' + p.cat + ' ' + p.batch).toLowerCase().indexOf(q) > -1; })
+    .filter(function (p) { return !q || (p.name + ' ' + p.cat + ' ' + p.batch + ' ' + lname(p.loc)).toLowerCase().indexOf(q) > -1; })
     .sort(function (a, b) { return parseD(a.expiry) - parseD(b.expiry); });
 
-  var html = header('EXPIRY DATE', lname(loc));
+  var html = header('EXPIRY DATE', manyLocs ? 'All ' + visibleLocations().length + ' kitchens' : lname(loc));
   html += '<div class="wrap">';
   html += '<div class="stats">' +
     statCard(counts.all, 'Items', 'var(--ink)') +
@@ -13372,7 +13383,8 @@ function renderExpiry() {
 
   html += '<div class="sec-t">Items · ' + list.length + (list.length !== ps.length ? ' of ' + ps.length : '') + '</div>';
   html += '<div class="tablewrap"><table class="utable"><thead><tr>' +
-    ['Item', 'MFG date', 'Expiry date', 'Status'].map(function (c) { return '<th>' + c + '</th>'; }).join('') +
+    (manyLocs ? ['Item', 'Kitchen', 'MFG date', 'Expiry date', 'Status'] : ['Item', 'MFG date', 'Expiry date', 'Status'])
+      .map(function (c) { return '<th>' + c + '</th>'; }).join('') +
     '</tr></thead><tbody>' +
     (list.length ? list.map(function (p) {
       var st = expiryStatus(p.expiry);
@@ -13386,13 +13398,14 @@ function renderExpiry() {
           '<div><button class="linkish b" data-a="product" data-x="' + h(p.id) + '">' + h(p.name) + '</button>' +
           (isActive(p) ? '' : ' ' + pill('INACTIVE', 'p-gry')) +
           '</div></div></td>' +
+        (manyLocs ? '<td class="sm">' + h(lname(p.loc)) + '</td>' : '') +
         '<td class="sm">' + h(p.opened ? fmtD(p.opened) : '—') + '</td>' +
         '<td class="sm">' + h(fmtD(p.expiry)) +
           '<div class="xs muted">' + (st.days < 0 ? n + unit + ' ago' : st.days === 0 ? 'today' : n + unit + ' left') + '</div></td>' +
         '<td>' + pill(st.label, st.cls) + '</td>' +
         '</tr>';
     }).join('')
-      : '<tr><td colspan="4" class="sm muted center" style="padding:18px">' +
+      : '<tr><td colspan="' + (manyLocs ? 5 : 4) + '" class="sm muted center" style="padding:18px">' +
         (q ? 'Nothing matches “' + h(S.q) + '”' : 'No items in this view') + '</td></tr>') +
     '</tbody></table></div>';
   html += '<div style="height:20px"></div></div>';
@@ -15463,7 +15476,8 @@ function render() {
   GUEST_LOCS = null;
   if (S.loc && S.loc !== 'ALL' && !locById(S.loc)) S.loc = null;
   if (S.loc === 'ALL' && !perm().all) S.loc = ME.loc || visibleLocations()[0].id;
-  if (S.tab !== 'home' && S.tab !== 'rep' && S.tab !== 'manage' && S.loc === 'ALL') S.loc = visibleLocations()[0].id;
+  if (S.tab !== 'home' && S.tab !== 'rep' && S.tab !== 'manage' && S.tab !== 'exp' && S.loc === 'ALL') S.loc = visibleLocations()[0].id;
+  if (S.tab === 'exp' && S.loc === 'ALL' && !perm().all) S.loc = ME.loc || visibleLocations()[0].id;
   /* A section this account's job types do not cover is not reachable, however
      it was arrived at — a stale tab from the last session, a deep link, an old
      button. The nav hides it; this is what makes it true. */
