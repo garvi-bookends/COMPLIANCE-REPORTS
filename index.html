@@ -15306,9 +15306,9 @@ function renderTypeProducts(t, kind) {
     return mgMatches([p.name, labelCode(p), p.cat || '', uname(p.by), lname(p.loc), p.batch || '']);
   });
 
-  var cols = isLab
-    ? ['Label', 'Kitchen', 'Added by', 'Added', 'Use by', 'Status']
-    : ['Item', 'Kitchen', 'Added by', 'Added', 'Use by', 'Status'];
+  /* The columns are the three things the form asks for, plus where it came
+     from and whether the sticker was ever written. */
+  var cols = [isLab ? 'Label' : 'Item', 'Kitchen', 'Added by', 'MFG date', 'Expiry date', 'Status'];
   html += '<div class="sec-t">' + (isLab ? 'Labels · ' : 'Items · ') + shown.length +
     (shown.length !== all.length ? ' of ' + all.length : '') + '</div>';
   html += mgTable(cols, shown.map(function (p) {
@@ -15320,14 +15320,12 @@ function renderTypeProducts(t, kind) {
           '<div class="xs muted">' + h(labelCode(p)) + (p.cat ? ' · ' + h(p.cat) : '') + '</div></td>' +
         '<td class="sm">' + h(lname(p.loc)) + '</td>' +
         '<td class="sm">' + h(uname(p.by)) + '</td>' +
-        '<td class="sm muted">' + h(p.createdAt ? fmtD(ymd(new Date(p.createdAt))) : '—') + '</td>' +
+        '<td class="sm">' + h(p.opened ? fmtD(p.opened) : '—') +
+          (p.createdAt ? '<div class="xs muted">added ' + h(fmtD(ymd(new Date(p.createdAt)))) + '</div>' : '') + '</td>' +
         '<td class="sm">' + h(fmtD(p.expiry)) +
-          (isLab ? ' ' + pill(st.label, st.cls) : '<div class="xs muted">' + h(left) + '</div>') + '</td>' +
-        '<td>' + (isLab
-          ? pill(p.labelled ? 'LABEL OK' : 'NOT WRITTEN', p.labelled ? 'p-grn' : 'p-org') +
-            (p.labelled && p.labelledAt ? '<div class="xs muted">' + h(fmtD(ymd(new Date(p.labelledAt)))) + '</div>' : '')
-          : pill(st.label, st.cls) +
-            (p.labelled ? '' : ' ' + pill('NO LABEL', 'p-gry'))) + '</td>' +
+          '<div class="xs muted">' + h(left) + '</div></td>' +
+        '<td>' + pill(st.label, st.cls) + ' ' +
+          pill(p.labelled ? 'LABEL OK' : 'NOT WRITTEN', p.labelled ? 'p-grn' : 'p-org') + '</td>' +
         '</tr>';
     }), isLab ? 'Nobody has added a label yet' : 'Nothing is being tracked yet');
 
