@@ -89,11 +89,24 @@ button,input,select,textarea{font:inherit;color:inherit}
 @media(max-width:792px){.fab{right:16px}}
 
 /* ---------- tabbar ---------- */
-.tabs{position:fixed;left:0;right:0;bottom:0;z-index:70;background:#fff;border-top:1px solid var(--line);
+#tabbar{position:fixed;left:0;right:0;bottom:0;z-index:70}
+.tabs{background:#fff;border-top:1px solid var(--line);
   display:flex;padding:6px 4px calc(env(safe-area-inset-bottom) + 6px)}
 .tabs-in{max-width:760px;margin:0 auto;display:flex;width:100%}
-.tab{flex:1;background:none;border:0;padding:6px 2px;display:flex;flex-direction:column;align-items:center;gap:3px;color:var(--mut);font-size:10.5px;font-weight:700;cursor:pointer}
-.tab svg{width:24px;height:24px;fill:currentColor}
+/* flex:1 1 0 with min-width:0 makes every tab an equal share of whatever width
+   there is and lets it shrink below its text — without min-width:0 a long word
+   forces the bar wider than the screen. box-sizing keeps the padding inside
+   that share. 48px is the smallest comfortable tap target. */
+.tab{flex:1 1 0;min-width:0;box-sizing:border-box;background:none;border:0;padding:7px 3px;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;gap:3px;min-height:48px;color:var(--mut);font-size:10px;font-weight:700;cursor:pointer}
+.tab svg{width:24px;height:24px;fill:currentColor;flex:none}
+/* One line, centred, never wrapping onto a second and pushing the bar out of
+   shape. The ellipsis is a backstop that should never be reached. */
+.tab>span{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;line-height:1.2;text-align:center}
+.lbl-wide{display:none}
+.tchev{display:none}
+@media (min-width:360px){ .tchev{display:inline} }
+@media (min-width:360px){ .tab{font-size:11px} }
 .tab.on{color:var(--brand)}
 .tab .tcount{background:var(--red);color:#fff;font-size:10px;font-weight:800;min-width:18px;height:18px;border-radius:9px;display:inline-grid;place-items:center;padding:0 4px;margin-left:4px;vertical-align:middle}
 
@@ -122,8 +135,8 @@ button,input,select,textarea{font:inherit;color:inherit}
    it as indented nav rows; on a phone the bottom bar cannot nest, so they are
    drawn as a panel above it instead. Exactly one of the two ever shows. */
 .subtab{display:none}
-.mgmenu{background:#fff;border-top:1px solid var(--line);box-shadow:0 -8px 24px rgba(0,0,0,.10)}
-.mgmenu-i{display:flex;align-items:center;gap:12px;width:100%;text-align:left;border:0;border-bottom:1px solid var(--line);background:#fff;padding:12px 14px;cursor:pointer}
+.mgmenu{background:#fff;border-top:1px solid var(--line);box-shadow:0 -8px 24px rgba(0,0,0,.10);max-height:60vh;overflow-y:auto;-webkit-overflow-scrolling:touch}
+.mgmenu-i{display:flex;align-items:center;gap:12px;width:100%;box-sizing:border-box;min-height:56px;text-align:left;border:0;border-bottom:1px solid var(--line);background:#fff;padding:10px 16px;cursor:pointer}
 .mgmenu-i:last-child{border-bottom:0}
 .mgmenu-i:active{background:#f7f8f6}
 .mgmenu-sub{padding-left:26px;background:#fafbfa}
@@ -230,18 +243,23 @@ table.tbl tr:last-child td{border-bottom:0}
   #app{max-width:none;padding:0 0 40px 232px}
   .hdr{padding-left:22px;padding-right:22px}
   .wrap{padding:22px 26px;max-width:1240px}
-  .tabs{left:0;right:auto;top:0;bottom:0;width:232px;border-top:0;border-right:1px solid var(--line);
+  #tabbar{position:static}
+  .tabs{position:fixed;left:0;right:auto;top:0;bottom:0;z-index:70;width:232px;border-top:0;border-right:1px solid var(--line);
     padding:0;background:#0b3d2e;flex-direction:column}
   .tabs-in{flex-direction:column;max-width:none;width:232px;padding:18px 12px;gap:4px}
   .tabs-in::before{content:'BOOKENDS';display:block;color:#fff;font-size:13px;font-weight:800;letter-spacing:2px;padding:8px 14px 18px;opacity:.9}
-  .tab{flex:none;flex-direction:row;justify-content:flex-start;gap:12px;padding:13px 14px;border-radius:12px;
+  .tab{flex:none;flex-direction:row;justify-content:flex-start;align-items:center;gap:12px;padding:12px 14px;min-height:48px;border-radius:12px;
     font-size:14.5px;color:rgba(255,255,255,.72)}
-  .tab svg{width:21px;height:21px}
+  .tab svg{width:22px;height:22px}
+  /* the label can take the rest of the row, and reads left to right */
+  .tab>span{max-width:none;flex:1;text-align:left;display:flex;align-items:center;gap:6px}
+  .lbl-wide{display:inline}
+  .lbl-narrow{display:none}
   .tab.on{background:rgba(255,255,255,.14);color:#fff}
   .tab:hover{background:rgba(255,255,255,.08)}
   .fab{right:34px;bottom:34px}
   .grid2{grid-template-columns:repeat(2,1fr)}
-  .grid3{grid-template-columns:repeat(6,1fr)}
+  .grid3{grid-template-columns:repeat(auto-fit,minmax(132px,1fr))}
   .dash2{display:grid;grid-template-columns:340px 1fr;gap:18px;align-items:start}
   .dash2>*{margin-bottom:0}
   .loc-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:12px}
@@ -251,8 +269,8 @@ table.tbl tr:last-child td{border-bottom:0}
   .btn:hover{filter:brightness(1.06)}
   .lrow:hover{background:#f7f8f6}
   /* the nav is a sidebar here, so Management nests inside it */
-  .subtab{display:flex;padding-left:30px;font-size:13.5px;opacity:.92}
-  .subtab .subdot{font-size:15px;width:21px;text-align:center}
+  .subtab{display:flex;padding-left:32px;font-size:13.5px;opacity:.92;min-height:44px}
+  .subtab .subdot{font-size:15px;width:22px;flex:none;text-align:center;line-height:1}
   .mgmenu{display:none}
 }
 @media (min-width:1280px){ .wrap{padding:24px 40px} }
@@ -12464,7 +12482,10 @@ function tabbar() {
   if (perm().superadmin) {
     var waiting = PENDING_SIGNUPS + RESET_REQUESTS;
     nav += '<button class="tab' + (S.tab === 'manage' ? ' on' : '') + '" data-a="mgmtMenu" aria-expanded="' + (MGMT_MENU ? 'true' : 'false') + '">' +
-      ic('shield') + '<span>Management ' + (MGMT_MENU ? '⌄' : '›') +
+      /* Two labels, one shown at a time by CSS. "Management" cannot fit a
+         sixth of a 320px screen at a readable size, and truncating it to
+         "Manageme…" reads worse than a shorter word that is whole. */
+      ic('shield') + '<span><span class="lbl-wide">Management</span><span class="lbl-narrow">Manage</span><span class="tchev"> ' + (MGMT_MENU ? '⌄' : '›') + '</span>' +
       (waiting ? '<span class="tcount">' + (waiting > 99 ? '99+' : waiting) + '</span>' : '') + '</span></button>';
     if (MGMT_MENU) {
       nav += MGMT_ITEMS.map(function (it) {
