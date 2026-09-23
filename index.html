@@ -14577,18 +14577,41 @@ function tasksAwaitingApproval() {
   }).sort(function (a, b) { return (b.completedAt || 0) - (a.completedAt || 0); });
 }
 
+/* Everything that has been sent in, decided or not. The page used to show
+   only the queue, so a job vanished the moment it was ticked and there was
+   nowhere to see what had been approved. */
+function reviewState(t) {
+  if (t.status === 'rejected') return 'rejected';
+  return t.approved === true ? 'approved' : 'waiting';
+}
+function tasksSentIn() {
+  return DB.tasks.filter(function (t) {
+    return (t.status === 'completed' || t.status === 'rejected') && taskLive(t);
+  }).sort(function (a, b) {
+    /* Waiting first — it is the work that still needs someone — then newest. */
+    var aw = reviewState(a) === 'waiting', bw = reviewState(b) === 'waiting';
+    if (aw !== bw) return aw ? -1 : 1;
+    return (b.completedAt || 0) - (a.completedAt || 0);
+  });
+}
 function renderTaskReview() {
-  var list = tasksAwaitingApproval();
+  var all = tasksSentIn();
+  var counts = { waiting: 0, approved: 0, rejected: 0 };
+  all.forEach(function (t) { counts[reviewState(t)]++; });
+  var f = MGMT_FILTER === 'waiting' || MGMT_FILTER === 'approved' || MGMT_FILTER === 'rejected' ? MGMT_FILTER : 'all';
+  var list = f === 'all' ? all : all.filter(function (t) { return reviewState(t) === f; });
   var html = mgHead('TASK REVIEW', 'Management · Super Admin', ['mgmtBack', 'Dashboard']);
 
-  var byLoc = {}, byUser = {};
-  list.forEach(function (t) { byLoc[t.loc] = 1; if (t.completedBy) byUser[t.completedBy] = 1; });
+  var byUser = {};
+  all.forEach(function (t) { if (t.completedBy) byUser[t.completedBy] = 1; });
   html += mgStatsRow([
-    [list.length, 'Waiting', list.length ? 'var(--org)' : 'var(--grn)'],
-    [Object.keys(byUser).length, 'People', 'var(--blue)'],
-    [Object.keys(byLoc).length, 'Restaurants', 'var(--blue)'],
-    [list.filter(function (t) { return t.before || t.after; }).length, 'With photos', 'var(--ink)']
+    [counts.waiting, 'Waiting', counts.waiting ? 'var(--org)' : 'var(--grn)'],
+    [counts.approved, 'Approved', 'var(--grn)'],
+    [counts.rejected, 'Rejected', counts.rejected ? 'var(--red)' : 'var(--mut)'],
+    [Object.keys(byUser).length, 'People', 'var(--blue)']
   ]);
+  html += mgChips([['all', 'All ' + all.length], ['waiting', 'Waiting ' + counts.waiting],
+    ['approved', 'Approved ' + counts.approved], ['rejected', 'Rejected ' + counts.rejected]], f);
 
   html += mgSearchBox(MGMT_Q, 'Person, job, restaurant or job type');
 
@@ -14596,9 +14619,10 @@ function renderTaskReview() {
     return mgMatches([uname(t.completedBy), cleanName(t), jobTypeName(taskJobType(t)), lname(t.loc), t.zone || '']);
   });
 
-  html += '<div class="sec-t">Sent for approval · ' + shown.length + '</div>';
+  html += '<div class="sec-t">Sent for approval · ' + shown.length + (shown.length !== all.length ? ' of ' + all.length : '') + '</div>';
   html += mgTable(['User', 'Task / Service', 'Project', 'Area', 'Restaurant', 'Completed date', 'Completed time', 'Status', 'Actions'],
     shown.map(function (t) {
+      var st = reviewState(t);
       return '<tr>' +
         '<td><span class="b">' + h(uname(t.completedBy)) + '</span></td>' +
         '<td><button class="linkish b" data-a="task" data-x="' + h(t.id) + '">' + h(cleanName(t)) + '</button>' +
@@ -14608,15 +14632,21 @@ function renderTaskReview() {
         '<td class="sm">' + h(lname(t.loc)) + '</td>' +
         '<td class="sm">' + h(fmtDateOf(t.completedAt)) + '</td>' +
         '<td class="sm">' + h(fmtClock(t.completedAt)) + '</td>' +
-        '<td>' + statusPill(t) + '</td>' +
-        '<td class="nowrap">' +
-          mgBtn('approve', t.id, '✓', 'Approve', 'background:#e3f4ea;color:var(--grn)') +
-          mgBtn('rejectAsk', t.id, '✕', 'Reject', 'background:#f6e7e5;color:var(--red)') +
+        '<td>' + statusPill(t) +
+          /* Who decided it, and when — the answer to "has this been done?" */
+          (st !== 'waiting' ? '<div class="xs muted">' +
+            h(t.approvedBy ? uname(t.approvedBy) : '—') +
+            (t.approvedAt ? ' · ' + h(fmtDateOf(t.approvedAt)) : '') + '</div>' : '') +
+          (st === 'rejected' && t.reject ? '<div class="xs" style="color:var(--red)">' + h(t.reject) + '</div>' : '') + '</td>' +
+        '<td class="nowrap">' + (st === 'waiting'
+          ? mgBtn('approve', t.id, '✓', 'Approve', 'background:#e3f4ea;color:var(--grn)') +
+            mgBtn('rejectAsk', t.id, '✕', 'Reject', 'background:#f6e7e5;color:var(--red)')
+          : mgBtn('task', t.id, '👁', 'Open the job')) +
         '</td></tr>';
-    }), list.length ? 'Nothing matches “' + MGMT_Q + '”' : 'Nothing is waiting — every job sent in has been decided on');
+    }), all.length ? 'Nothing matches this view' : 'Nothing has been sent in yet');
 
   html += '<div class="card sm muted" style="margin-top:12px">Only this account can approve or reject. ' +
-    'Everyone else records the work and sends it here.</div>';
+    'Everyone else records the work and sends it here. Approved and rejected work stays on this page.</div>';
 
   $('#app').innerHTML = html + '<div style="height:20px"></div></div>';
   mgWireSearch(renderTaskReview);
