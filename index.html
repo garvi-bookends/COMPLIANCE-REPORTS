@@ -12687,9 +12687,15 @@ function stampPhoto(im, srcType) {
   return draw(0.3, 'image/jpeg', 0.75);
 }
 
-function capture(cb) {
+/* capture(cb)        — opens the camera straight away, for evidence that has
+                         to be taken there and then.
+   capture(cb, true)  — opens the phone's picker instead, so a photo already
+                         taken can be chosen. Same stamping, same size limit;
+                         the only difference is where the picture comes from. */
+function capture(cb, fromLibrary) {
   var inp = document.createElement('input');
-  inp.type = 'file'; inp.accept = 'image/*'; inp.setAttribute('capture', 'environment');
+  inp.type = 'file'; inp.accept = 'image/*';
+  if (!fromLibrary) inp.setAttribute('capture', 'environment');
   inp.style.display = 'none'; document.body.appendChild(inp);
   inp.onchange = function () {
     var f = inp.files && inp.files[0]; if (!f) { inp.remove(); return; }
@@ -13686,9 +13692,11 @@ function renderExpiry() {
          opens it. A row of buttons beside every line invited a mis-tap on the
          delete of a record somebody else was relying on. */
       return '<tr>' +
-        '<td><button class="linkish b" data-a="product" data-x="' + h(p.id) + '">' + h(p.name) + '</button>' +
+        '<td><div class="row" style="gap:10px;align-items:center">' +
+          (p.photo ? '<img src="' + photoSrc(p.photo) + '" alt="" style="width:40px;height:40px;border-radius:9px;object-fit:cover;flex:0 0 auto">' : '') +
+          '<div><button class="linkish b" data-a="product" data-x="' + h(p.id) + '">' + h(p.name) + '</button>' +
           (isActive(p) ? '' : ' ' + pill('INACTIVE', 'p-gry')) +
-          '<div class="xs muted">' + h(labelCode(p)) + '</div></td>' +
+          '<div class="xs muted">' + h(labelCode(p)) + '</div></div></div></td>' +
         '<td class="sm">' + h(p.opened ? fmtD(p.opened) : '—') + '</td>' +
         '<td class="sm">' + h(fmtD(p.expiry)) +
           '<div class="xs muted">' + (st.days < 0 ? n + unit + ' ago' : st.days === 0 ? 'today' : n + unit + ' left') + '</div></td>' +
@@ -13781,7 +13789,16 @@ function productForm(id) {
     '<div class="chips" style="margin:-4px 0 4px">' + [1, 2, 3, 5, 7, 14, 30].map(function (d) {
       return '<button class="chip" data-a="quickExp" data-x="' + d + '">+' + d + 'd</button>';
     }).join('') + '</div>' +
-    '<div class="xs muted">Tap a chip to set the expiry that many days after the MFG date.</div>' +
+    '<div class="xs muted" style="margin-bottom:14px">Tap a chip to set the expiry that many days after the MFG date.</div>' +
+    /* One photo, either way it is easiest to get: the box opens the camera,
+       the second button opens the phone's pictures for one already taken. */
+    '<label class="f"><span>Photo <span class="muted">(optional)</span></span></label>' +
+    '<div class="photo tall" id="f_photobox" data-a="shootProduct">' + (f.photo ? '<img src="' + photoSrc(f.photo) + '">' :
+      '<div><div style="font-size:34px">📷</div><div class="ph-t" style="font-size:14px">TAP TO TAKE PHOTO</div></div>') + '</div>' +
+    '<div class="btnrow" style="margin-top:8px">' +
+    '<button class="btn sec" data-a="shootProduct">📷 Take photo</button>' +
+    '<button class="btn sec" data-a="pickProduct">🖼 Upload photo</button></div>' +
+    (f.photo ? '<button class="btn sec" data-a="dropProductPhoto" style="margin-top:8px;color:var(--red)">Remove photo</button>' : '') +
     '</div>' +
     '<div class="sec-t">Label</div>' +
     '<div class="card">' +
@@ -16039,10 +16056,30 @@ document.addEventListener('click', function (ev) {
       refreshLabelDetail();   /* setting .value fires no event of its own */
       break;
     }
-    case 'shootProduct': capture(function (data) {
-      window._form.photo = data;
-      document.getElementById('f_photobox').innerHTML = '<img src="' + data + '">';
-    }); break;
+    case 'shootProduct':
+    case 'pickProduct': {
+      var fromLib = a === 'pickProduct';
+      capture(function (data) {
+        window._form.photo = data;
+        var box = document.getElementById('f_photobox');
+        if (box) box.innerHTML = '<img src="' + data + '">';
+        /* The Remove button only exists once there is something to remove. */
+        var row = document.querySelector('[data-a="pickProduct"]');
+        if (row && row.parentNode && !document.querySelector('[data-a="dropProductPhoto"]')) {
+          row.parentNode.insertAdjacentHTML('afterend',
+            '<button class="btn sec" data-a="dropProductPhoto" style="margin-top:8px;color:var(--red)">Remove photo</button>');
+        }
+      }, fromLib);
+      break;
+    }
+    case 'dropProductPhoto': {
+      window._form.photo = null;
+      var pb = document.getElementById('f_photobox');
+      if (pb) pb.innerHTML = '<div><div style="font-size:34px">📷</div><div class="ph-t" style="font-size:14px">TAP TO TAKE PHOTO</div></div>';
+      var rm = document.querySelector('[data-a="dropProductPhoto"]');
+      if (rm) rm.remove();
+      break;
+    }
     case 'saveProduct': saveProduct(); break;
     case 'delProduct': {
       var dp = DB.products.filter(function (p) { return p.id === x; })[0]; if (!dp) break;
@@ -16125,7 +16162,12 @@ function saveProduct() {
        batch, its storage or its photo just because the form no longer asks. */
     var p = DB.products.filter(function (x) { return x.id === id; })[0];
     p.name = name; p.opened = mfg; p.expiry = expiry;
-    save('products', p); logAct('product', 'Updated: ' + p.name, p.loc); closeSheet(); render(); toast('Label updated');
+    /* The form opened holding whatever photo the record had, so this covers
+       adding one, replacing one, and taking one off. */
+    p.photo = window._form.photo || null;
+    save('products', p); logAct('product', 'Updated: ' + p.name, p.loc);
+    uploadProductPhoto(p);
+    closeSheet(); render(); toast('Label updated');
     return;
   }
 
@@ -16143,11 +16185,13 @@ function saveProduct() {
     /* Not asked for any more; kept on the record so everything that reads a
        product still finds the shape it expects. */
     cat: '', type: '', desc: '', color: '', status: 'Active',
-    batch: '', qty: 1, unit: 'kg', storage: '', note: '', photo: null,
+    batch: '', qty: 1, unit: 'kg', storage: '', note: '',
+    photo: window._form.photo || null,
     labelled: false, labelledAt: null,
     by: ME.id, initials: initials(ME.name), createdAt: Date.now()
   };
   DB.products.push(np); save('products', np); logAct('product', 'Added: ' + np.name, loc);
+  uploadProductPhoto(np);
   closeSheet(); render(); labelSheet(np.id); toast('Added — print the label now');
 }
 
