@@ -15255,9 +15255,63 @@ function renderJobManagement() {
 /* The services under one job type. For Cleaning these are the checklist jobs
    the app has always generated; for a type the Super Admin added they are
    whatever was set up under it. */
+/* Labelling has no services and never will: nobody schedules "a label" the way
+   they schedule a clean. The work under it is the labels people actually made,
+   so that is what this job type shows — every one of them, across every
+   kitchen, with who made it and whether it was ever applied. */
+function renderTypeLabels(t) {
+  var all = DB.products.slice().sort(function (a, b) { return (b.createdAt || 0) - (a.createdAt || 0); });
+  var missing = all.filter(function (p) { return !p.labelled; });
+  var kitchens = {}; all.forEach(function (p) { kitchens[p.loc] = 1; });
+
+  var html = mgHead(t.name.toUpperCase(), 'Job Management · ' + all.length + ' label' + (all.length === 1 ? '' : 's'),
+    ['mgmtJobsBack', 'Job Management']);
+  html += mgStatsRow([
+    [all.length, 'Labels', 'var(--ink)'],
+    [all.length - missing.length, 'Applied', 'var(--grn)'],
+    [missing.length, 'Not written', missing.length ? 'var(--org)' : 'var(--mut)'],
+    [Object.keys(kitchens).length, 'Kitchens', 'var(--ink)']
+  ]);
+  if (!t.active) {
+    html += '<div class="card sm" style="background:#fdecea;border-color:#f6c9c4;margin-top:12px"><b>This job type is switched off.</b> ' +
+      'Nobody can be given labelling work while it is.</div>';
+  }
+  html += mgSearchBox(MGMT_Q, 'Label, code, kitchen or who added it');
+  html += mgChips([['all', 'All ' + all.length],
+    ['done', 'Applied ' + (all.length - missing.length)],
+    ['missing', 'Not written ' + missing.length]], MGMT_FILTER);
+
+  var shown = all.filter(function (p) {
+    if (MGMT_FILTER === 'missing' && p.labelled) return false;
+    if (MGMT_FILTER === 'done' && !p.labelled) return false;
+    return mgMatches([p.name, labelCode(p), p.cat || '', uname(p.by), lname(p.loc), p.batch || '']);
+  });
+
+  html += '<div class="sec-t">Labels · ' + shown.length + (shown.length !== all.length ? ' of ' + all.length : '') + '</div>';
+  html += mgTable(['Label', 'Kitchen', 'Added by', 'Added', 'Use by', 'Status'],
+    shown.map(function (p) {
+      var st = expiryStatus(p.expiry);
+      return '<tr>' +
+        '<td><button class="linkish b" data-a="product" data-x="' + h(p.id) + '">' + h(p.name) + '</button>' +
+          '<div class="xs muted">' + h(labelCode(p)) + (p.cat ? ' · ' + h(p.cat) : '') + '</div></td>' +
+        '<td class="sm">' + h(lname(p.loc)) + '</td>' +
+        '<td class="sm">' + h(uname(p.by)) + '</td>' +
+        '<td class="sm muted">' + h(p.createdAt ? fmtD(ymd(new Date(p.createdAt))) : '—') + '</td>' +
+        '<td class="sm">' + h(fmtD(p.expiry)) + ' ' + pill(st.label, st.cls) + '</td>' +
+        '<td>' + pill(p.labelled ? 'LABEL OK' : 'NOT WRITTEN', p.labelled ? 'p-grn' : 'p-org') +
+          (p.labelled && p.labelledAt ? '<div class="xs muted">' + h(fmtD(ymd(new Date(p.labelledAt)))) + '</div>' : '') + '</td>' +
+        '</tr>';
+    }), 'Nobody has added a label yet');
+
+  html += '<div class="card sm muted" style="margin-top:12px">Every label anyone has added, newest first. Tap a name to open it. ' +
+    'Labels are added on the Labelling page, not here.</div>';
+  $('#app').innerHTML = html + '<div style="height:20px"></div></div>';
+  mgWireSearch(renderTypeServices);
+}
 function renderTypeServices() {
   var t = jobTypeById(S.manageType);
   if (!t) { S.manage = 'jobs'; render(); return; }
+  if (t.id === 'labelling') { renderTypeLabels(t); return; }
   var list = allServicesOfType(t.id);
   var needsLocs = list.filter(isAllOutlets);
 
