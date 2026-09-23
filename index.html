@@ -14513,7 +14513,6 @@ var MGMT_ERR = '';
 var MGMT_BUSY = false;
 var MGMT_Q = '';                // search text, shared by both screens
 var MGMT_FILTER = 'all';
-var MGMT_WHO = '';              // Job Management: show one person's jobs, '' = everyone
 /* Job Management: the work under a job type, active or finished with. */
 var MGMT_JOBS = 'active';
 /* A job is live work until it has been approved. Sent in and waiting is still
@@ -15132,34 +15131,13 @@ function renderTypeServices() {
     ['active', 'Active services ' + byState.active],
     ['completed', 'Completed services ' + byState.completed]], f) + '</div>';
 
-  /* The services the chip covers. Everything below narrows this, not the
-     whole list, so a count on screen can never contradict the chip above it:
-     picking Completed used to leave "Everyone · all 44" sitting over a table
-     reading 0 of 44. */
+  /* The services the chip covers, then whatever was searched for. Nothing
+     else narrows the table: the Assigned To column already names who has
+     each service and opens the tick list to change it, and the search box
+     takes a person's name, so a dropdown to pick one was a third way to do
+     what those two already did. */
   var inState = list.filter(function (j) { return f === 'all' || serviceState(j) === f; });
-
-  /* Who a job belongs to. The Super Admin gives jobs out here, so the table
-     narrows to one person rather than always showing every service.
-
-     Left out entirely when the chip has nothing in it: there is nothing to
-     narrow, and a dropdown offering to filter an empty table is just
-     something between the person and the answer. */
-  var people = peopleForType(t.id);
-  if (inState.length) {
-    html += '<label class="f" style="margin-top:10px"><span>Assigned to</span>' +
-      '<select class="inp" id="mg_who">' +
-      '<option value=""' + (MGMT_WHO === '' ? ' selected' : '') + '>Everyone · all ' + inState.length + '</option>' +
-      '<option value="__none"' + (MGMT_WHO === '__none' ? ' selected' : '') + '>Nobody yet · ' + inState.filter(function (j) { return !assigneesOf(j).length; }).length + '</option>' +
-      people.map(function (u) {
-        var n = inState.filter(function (j) { return assigneesOf(j).indexOf(u.id) > -1; }).length;
-        return '<option value="' + h(u.id) + '"' + (MGMT_WHO === u.id ? ' selected' : '') + '>' + h(u.name) +
-          ' · ' + h(ROLES[u.role] ? ROLES[u.role].label : u.role) + ' · ' + n + '</option>';
-      }).join('') + '</select></label>';
-  }
-
   var shown = inState.filter(function (j) {
-    if (MGMT_WHO === '__none' && assigneesOf(j).length) return false;
-    if (MGMT_WHO && MGMT_WHO !== '__none' && assigneesOf(j).indexOf(MGMT_WHO) === -1) return false;
     return mgMatches([j.area, j.zone || '', assigneeNames(j)]);
   });
   html += '<div class="sec-t">Services · ' + shown.length +
@@ -15201,8 +15179,6 @@ function renderTypeServices() {
     'Enter saves, Escape cancels.</div>';
   $('#app').innerHTML = html + '<div style="height:20px"></div></div>';
   mgWireSearch(renderTypeServices);
-  var who = document.getElementById('mg_who');
-  if (who) who.addEventListener('change', function () { MGMT_WHO = this.value; renderTypeServices(); });
 }
 
 /* The work itself, under the services that generate it: what is still live and
@@ -15697,7 +15673,7 @@ document.addEventListener('click', function (ev) {
     case 'mgmtJobsBack': S.manage = 'jobs'; MGMT_Q = ''; MGMT_FILTER = 'all'; render(); break;
     case 'mgFilter': MGMT_FILTER = x; render(); break;
     case 'mgJobs': MGMT_JOBS = x; render(); break;
-    case 'openType': if (!perm().superadmin) break; S.manage = 'type'; S.manageType = x; MGMT_Q = ''; MGMT_WHO = ''; MGMT_FILTER = 'all'; render(); break;
+    case 'openType': if (!perm().superadmin) break; S.manage = 'type'; S.manageType = x; MGMT_Q = ''; MGMT_FILTER = 'all'; render(); break;
     case 'addJobType': if (!perm().superadmin) break; JOBT_ERR = ''; closeSheet(); jobTypeForm(null); break;
     case 'editJobType': if (!perm().superadmin) break; JOBT_ERR = ''; closeSheet(); jobTypeForm(x); break;
     case 'saveJobType': saveJobType(x || null); break;
