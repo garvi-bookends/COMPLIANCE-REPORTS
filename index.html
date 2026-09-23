@@ -14948,7 +14948,11 @@ function servicesOfType(id, loc) {
    there showed a 0 that was true and useless. */
 function typeCount(id) {
   if (id === 'labelling') return { n: DB.products.length, what: DB.products.length === 1 ? 'label' : 'labels' };
-  var n = servicesOfType(id, null).length;
+  /* Counted from the list the type page shows, not from the ones currently
+     scheduled. It said "0 services" for a checklist of 46 that happened to be
+     switched off, which read as "there is nothing here" when opening it showed
+     46 rows. */
+  var n = allServicesOfType(id).length;
   return { n: n, what: n === 1 ? 'service' : 'services' };
 }
 function renderJobManagement() {
