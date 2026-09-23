@@ -15260,7 +15260,6 @@ function renderTypeProducts(t, kind) {
     return isLab ? (b.createdAt || 0) - (a.createdAt || 0) : parseD(a.expiry) - parseD(b.expiry);
   });
   var kitchens = {}; all.forEach(function (p) { kitchens[p.loc] = 1; });
-  var missing = all.filter(function (p) { return !p.labelled; });
   var counts = { active: 0, soon: 0, expired: 0 };
   all.forEach(function (p) { counts[expiryStatus(p.expiry).k]++; });
   var noun = isLab ? 'label' : 'item';
@@ -15270,8 +15269,8 @@ function renderTypeProducts(t, kind) {
     ['mgmtJobsBack', 'Job Management']);
   html += mgStatsRow(isLab ? [
     [all.length, 'Labels', 'var(--ink)'],
-    [all.length - missing.length, 'Applied', 'var(--grn)'],
-    [missing.length, 'Not written', missing.length ? 'var(--org)' : 'var(--mut)'],
+    [counts.soon, 'Expiring soon', counts.soon ? 'var(--org)' : 'var(--mut)'],
+    [counts.expired, 'Expired', counts.expired ? 'var(--red)' : 'var(--mut)'],
     [Object.keys(kitchens).length, 'Kitchens', 'var(--ink)']
   ] : [
     [all.length, 'Items', 'var(--ink)'],
@@ -15287,18 +15286,15 @@ function renderTypeProducts(t, kind) {
   html += mgSearchBox(MGMT_Q, (isLab ? 'Label' : 'Item') + ', code, kitchen or who added it');
   html += mgChips(isLab
     ? [['all', 'All ' + all.length],
-       ['done', 'Applied ' + (all.length - missing.length)],
-       ['missing', 'Not written ' + missing.length]]
+       ['soon', 'Expiring soon ' + counts.soon],
+       ['expired', 'Expired ' + counts.expired]]
     : [['all', 'All ' + all.length],
        ['active', 'Active ' + counts.active],
        ['soon', 'Expiring soon ' + counts.soon],
        ['expired', 'Expired ' + counts.expired]], MGMT_FILTER);
 
   var shown = all.filter(function (p) {
-    if (isLab) {
-      if (MGMT_FILTER === 'missing' && p.labelled) return false;
-      if (MGMT_FILTER === 'done' && !p.labelled) return false;
-    } else if (MGMT_FILTER === 'active' || MGMT_FILTER === 'soon' || MGMT_FILTER === 'expired') {
+    if (MGMT_FILTER === 'active' || MGMT_FILTER === 'soon' || MGMT_FILTER === 'expired') {
       if (expiryStatus(p.expiry).k !== MGMT_FILTER) return false;
     }
     return mgMatches([p.name, labelCode(p), p.cat || '', uname(p.by), lname(p.loc), p.batch || '']);
@@ -15322,8 +15318,7 @@ function renderTypeProducts(t, kind) {
           (p.createdAt ? '<div class="xs muted">added ' + h(fmtD(ymd(new Date(p.createdAt)))) + '</div>' : '') + '</td>' +
         '<td class="sm">' + h(fmtD(p.expiry)) +
           '<div class="xs muted">' + h(left) + '</div></td>' +
-        '<td>' + pill(st.label, st.cls) + ' ' +
-          pill(p.labelled ? 'LABEL OK' : 'NOT WRITTEN', p.labelled ? 'p-grn' : 'p-org') + '</td>' +
+        '<td>' + pill(st.label, st.cls) + '</td>' +
         '</tr>';
     }), isLab ? 'Nobody has added a label yet' : 'Nothing is being tracked yet');
 
