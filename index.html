@@ -15132,21 +15132,32 @@ function renderTypeServices() {
     ['active', 'Active services ' + byState.active],
     ['completed', 'Completed services ' + byState.completed]], f) + '</div>';
 
-  /* Who a job belongs to. The Super Admin gives jobs out here, so the table
-     narrows to one person rather than always showing every service. */
-  var people = peopleForType(t.id);
-  html += '<label class="f" style="margin-top:10px"><span>Assigned to</span>' +
-    '<select class="inp" id="mg_who">' +
-    '<option value=""' + (MGMT_WHO === '' ? ' selected' : '') + '>Everyone · all ' + list.length + '</option>' +
-    '<option value="__none"' + (MGMT_WHO === '__none' ? ' selected' : '') + '>Nobody yet · ' + list.filter(function (j) { return !assigneesOf(j).length; }).length + '</option>' +
-    people.map(function (u) {
-      var n = list.filter(function (j) { return assigneesOf(j).indexOf(u.id) > -1; }).length;
-      return '<option value="' + h(u.id) + '"' + (MGMT_WHO === u.id ? ' selected' : '') + '>' + h(u.name) +
-        ' · ' + h(ROLES[u.role] ? ROLES[u.role].label : u.role) + ' · ' + n + '</option>';
-    }).join('') + '</select></label>';
+  /* The services the chip covers. Everything below narrows this, not the
+     whole list, so a count on screen can never contradict the chip above it:
+     picking Completed used to leave "Everyone · all 44" sitting over a table
+     reading 0 of 44. */
+  var inState = list.filter(function (j) { return f === 'all' || serviceState(j) === f; });
 
-  var shown = list.filter(function (j) {
-    if (f !== 'all' && serviceState(j) !== f) return false;
+  /* Who a job belongs to. The Super Admin gives jobs out here, so the table
+     narrows to one person rather than always showing every service.
+
+     Left out entirely when the chip has nothing in it: there is nothing to
+     narrow, and a dropdown offering to filter an empty table is just
+     something between the person and the answer. */
+  var people = peopleForType(t.id);
+  if (inState.length) {
+    html += '<label class="f" style="margin-top:10px"><span>Assigned to</span>' +
+      '<select class="inp" id="mg_who">' +
+      '<option value=""' + (MGMT_WHO === '' ? ' selected' : '') + '>Everyone · all ' + inState.length + '</option>' +
+      '<option value="__none"' + (MGMT_WHO === '__none' ? ' selected' : '') + '>Nobody yet · ' + inState.filter(function (j) { return !assigneesOf(j).length; }).length + '</option>' +
+      people.map(function (u) {
+        var n = inState.filter(function (j) { return assigneesOf(j).indexOf(u.id) > -1; }).length;
+        return '<option value="' + h(u.id) + '"' + (MGMT_WHO === u.id ? ' selected' : '') + '>' + h(u.name) +
+          ' · ' + h(ROLES[u.role] ? ROLES[u.role].label : u.role) + ' · ' + n + '</option>';
+      }).join('') + '</select></label>';
+  }
+
+  var shown = inState.filter(function (j) {
     if (MGMT_WHO === '__none' && assigneesOf(j).length) return false;
     if (MGMT_WHO && MGMT_WHO !== '__none' && assigneesOf(j).indexOf(MGMT_WHO) === -1) return false;
     return mgMatches([j.area, j.zone || '', assigneeNames(j)]);
