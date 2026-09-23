@@ -13188,16 +13188,15 @@ function renderHome() {
   html += '</div></div>';
   /* quick actions */
   html += '<div class="sec-t">Quick actions</div>';
+  /* Add product and Scan label QR were taken off this screen. Both still live
+     where the work is: adding on the Expiry Date and Labelling pages, scanning
+     on Labelling. */
   var quick = [];
-  if (!p.readonly) {
-    if (tabAllowed('clean')) quick.push('<button class="btn" data-a="tab" data-x="clean">✓ Do a clean</button>');
-    if (tabAllowed('exp')) quick.push('<button class="btn sec" data-a="addProduct">＋ Add product</button>');
-  }
+  if (!p.readonly && tabAllowed('clean')) quick.push('<button class="btn" data-a="tab" data-x="clean">✓ Do a clean</button>');
   if (!quick.length) quick.push('<button class="btn sec" data-a="tab" data-x="rep">📄 Open reports</button>');
   html += '<div class="btnrow" style="margin-bottom:10px">' + quick.join('') + '</div>';
 
   var quick2 = [];
-  if (tabAllowed('lab')) quick2.push('<button class="btn sec" data-a="scan">⛶ Scan label QR</button>');
   if (p.approve && tabAllowed('clean')) quick2.push('<button class="btn sec" data-a="tab" data-x="clean">☑ Approvals (' + pendingApprovals().length + ')</button>');
   else if (!p.approve && tabAllowed('lab')) quick2.push('<button class="btn sec" data-a="tab" data-x="lab">🏷 Print label</button>');
   if (quick2.length) html += '<div class="btnrow">' + quick2.join('') + '</div>';
