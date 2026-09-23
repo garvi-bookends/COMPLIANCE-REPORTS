@@ -13875,23 +13875,8 @@ function labelPayload(p) {
   var base = appLink();
   return base ? base + '#p=' + p.id : 'BOOKENDS|' + p.id + '|' + p.name + '|EXP:' + p.expiry;
 }
-/* Big, high-contrast card for staff to copy onto a blank sticker by hand */
-function writeLabel(p) {
-  return '<div class="wl">' +
-    '<div class="r"><span class="k">Product</span><span class="v big">' + h(p.name) + '</span></div>' +
-    (p.type ? '<div class="r"><span class="k">Type</span><span class="v">' + h(p.type) + '</span></div>' : '') +
-    (p.color ? '<div class="r"><span class="k">Colour</span><span class="v">' +
-      '<span style="display:inline-block;width:13px;height:13px;border-radius:4px;border:1px solid #bbb;vertical-align:-2px;margin-right:6px;background:' +
-      labelColor(p.color) + '"></span>' + h(p.color) + '</span></div>' : '') +
-    '<div class="r"><span class="k">MFG date</span><span class="v">' + fmtD(p.opened) + '</span></div>' +
-    '<div class="r"><span class="k">Use by</span><span class="v big"><span class="hl">' + fmtD(p.expiry) + '</span></span></div>' +
-    /* A record made on the short form has no batch or storage; an older one
-       still does, and still prints it. */
-    (p.batch ? '<div class="r"><span class="k">Batch</span><span class="v">' + h(p.batch) + '</span></div>' : '') +
-    (p.storage ? '<div class="r"><span class="k">Keep in</span><span class="v">' + h(p.storage) + '</span></div>' : '') +
-    (p.initials ? '<div class="r"><span class="k">Initials</span><span class="v">' + h(p.initials) + '</span></div>' : '') +
-    '</div>';
-}
+/* The card staff copied onto a blank sticker by hand was taken off the label
+   sheet — the printed label does that job, and the details are a table now. */
 function labelHTML(p) {
   /* The colour is a stripe down the edge rather than a fill: it has to stay
      readable printed on white paper in black and white. */
@@ -13906,11 +13891,42 @@ function labelHTML(p) {
     '<div class="exp">USE BY: ' + fmtD(p.expiry).toUpperCase() + '</div>' +
     '<div class="brand">BOOKENDS · ' + h(lname(p.loc)).toUpperCase() + '</div></div></div>';
 }
+/* The details of one label, as a table. This used to be a big card laid out
+   like the sticker itself, for copying onto a blank one by hand; the printed
+   label below does that job, so the room is better spent saying plainly what
+   the record holds. A line it has nothing for is left out rather than shown
+   empty. */
+function labelTable(p) {
+  var st = expiryStatus(p.expiry);
+  var n = Math.abs(st.days), unit = ' day' + (n === 1 ? '' : 's');
+  var left = st.days < 0 ? n + unit + ' ago' : st.days === 0 ? 'today' : n + unit + ' left';
+  var rows = [
+    ['Name', '<b>' + h(p.name) + '</b>'],
+    ['Label code', h(labelCode(p))],
+    ['MFG date', h(fmtD(p.opened))],
+    ['Expiry date', h(fmtD(p.expiry)) + ' <span class="muted">· ' + h(left) + '</span>'],
+    ['Status', pill(st.label, st.cls)],
+    ['Kitchen', h(lname(p.loc))],
+    ['Added by', h(uname(p.by)) + (p.initials ? ' <span class="muted">· ' + h(p.initials) + '</span>' : '')],
+    ['Label', p.labelled
+      ? '✓ applied <span class="muted">' + (p.labelledAt ? h(fmtD(ymd(new Date(p.labelledAt)))) : '') + '</span>'
+      : '<span class="muted">not written yet</span>']
+  ];
+  /* Whatever an older record carries that the short form no longer asks for. */
+  if (p.cat) rows.splice(2, 0, ['Category', h(p.cat)]);
+  if (p.batch) rows.push(['Batch', h(p.batch) + (p.qty ? ' <span class="muted">· ' + p.qty + ' ' + h(p.unit || '') + '</span>' : '')]);
+  if (p.storage) rows.push(['Storage', h(p.storage)]);
+  if (p.note) rows.push(['Notes', h(p.note)]);
+  return '<div class="tablewrap"><table class="utable"><tbody>' + rows.map(function (r) {
+    return '<tr><th style="text-align:left;white-space:nowrap">' + r[0] + '</th><td class="sm">' + r[1] + '</td></tr>';
+  }).join('') + '</tbody></table></div>';
+}
 function labelSheet(id) {
   var p = DB.products.filter(function (x) { return x.id === id; })[0]; if (!p) return;
-  var body = '<div class="card sm" style="background:#fbf6d9;border-color:#efe3a8"><b>Copy this onto a blank sticker and put it on the container.</b></div>' +
-    '<div class="card">' + writeLabel(p) + '</div>' +
-    (perm().readonly ? '' : '<button class="btn ' + (p.labelled ? 'sec' : 'ok') + '" data-a="markLabelled" data-x="' + p.id + '">' +
+  var body = (p.photo ? '<div class="card pad0" style="overflow:hidden"><img src="' + photoSrc(p.photo) +
+      '" alt="" style="display:block;width:100%;height:190px;object-fit:cover"></div>' : '') +
+    labelTable(p) +
+    (perm().readonly ? '' : '<button class="btn ' + (p.labelled ? 'sec' : 'ok') + '" style="margin-top:12px" data-a="markLabelled" data-x="' + p.id + '">' +
       (p.labelled ? '✓ Label already applied — confirm again' : '✓ I have written it and stuck it on') + '</button>') +
     '<div class="sec-t">If you have a printer</div>' +
     '<div class="card">' + labelHTML(p) +
