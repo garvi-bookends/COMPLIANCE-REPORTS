@@ -13772,36 +13772,19 @@ function productForm(id) {
     return (placeholder ? '<option value=""' + (cur ? '' : ' selected') + '>' + placeholder + '</option>' : '') +
       list.map(function (c) { return '<option' + (c === cur ? ' selected' : '') + '>' + h(c) + '</option>'; }).join('');
   }
+  /* Three things to fill in, and nothing else. The code is still made — the QR
+     and every scan depend on it — but it is generated, not typed, so it is
+     shown below rather than asked for. Everything an older record already
+     carries (batch, quantity, storage, its photo) is left exactly as it is
+     when one is edited here; none of it is cleared by not being on the form. */
   var body = '<div class="card">' +
-    '<label class="f"><span>Label name</span><input class="inp" id="f_name" value="' + h(f.name) + '" placeholder="e.g. Fresh Paneer" autocomplete="off"></label>' +
-    '<label class="f"><span>Label code</span><input class="inp" id="f_code" value="' + h(f.code) + '" autocomplete="off" spellcheck="false"></label>' +
-    '<div class="xs muted" style="margin:-8px 0 12px">This is what is printed under the QR. It must be unique.</div>' +
-    '<label class="f"><span>Category</span><select class="inp" id="f_cat">' + opts(CATEGORIES, f.cat, 'Select category') + '</select></label>' +
-    '<div class="grid2"><label class="f"><span>Label type</span><select class="inp" id="f_type">' + opts(LABEL_TYPES, f.type, 'Select type') + '</select></label>' +
-    '<label class="f"><span>Batch no.</span><input class="inp" id="f_batch" value="' + h(f.batch) + '"></label></div>' +
-    '<label class="f"><span>Description <span class="muted">(optional)</span></span>' +
-    '<textarea class="inp" id="f_desc" rows="2" maxlength="300" placeholder="What this label is for">' + h(f.desc) + '</textarea></label>' +
-    '<label class="f"><span>Colour</span></label>' +
-    '<div class="row" style="align-items:center;gap:8px;margin:-8px 0 12px">' +
-    '<select class="inp grow" id="f_color">' + opts(LABEL_COLORS.map(function (c) { return c.n; }), f.color, 'Select colour') + '</select>' +
-    '<span id="f_swatch" style="width:30px;height:30px;border-radius:8px;border:1px solid var(--line);flex:0 0 auto;background:' +
-      (f.color ? labelColor(f.color) : 'repeating-linear-gradient(45deg,#eee,#eee 4px,#fff 4px,#fff 8px)') + '"></span></div>' +
-    '<div class="grid2"><label class="f"><span>Start date</span><input class="inp" id="f_opened" type="date" value="' + f.opened + '"></label>' +
-    '<label class="f"><span>Expiry date</span><input class="inp" id="f_expiry" type="date" value="' + f.expiry + '"></label></div>' +
-    '<div class="chips" style="margin:-4px 0 12px">' + [1, 2, 3, 5, 7, 14, 30].map(function (d) {
+    '<label class="f"><span>Name</span><input class="inp" id="f_name" value="' + h(f.name) + '" placeholder="e.g. Fresh Paneer" autocomplete="off"></label>' +
+    '<label class="f"><span>MFG date</span><input class="inp" id="f_opened" type="date" value="' + f.opened + '"></label>' +
+    '<label class="f"><span>Expiry date</span><input class="inp" id="f_expiry" type="date" value="' + f.expiry + '"></label>' +
+    '<div class="chips" style="margin:-4px 0 4px">' + [1, 2, 3, 5, 7, 14, 30].map(function (d) {
       return '<button class="chip" data-a="quickExp" data-x="' + d + '">+' + d + 'd</button>';
     }).join('') + '</div>' +
-    '<div class="grid2"><label class="f"><span>Quantity</span><input class="inp" id="f_qty" type="number" step="0.5" inputmode="decimal" value="' + f.qty + '"></label>' +
-    '<label class="f"><span>Unit</span><select class="inp" id="f_unit">' + opts(UNITS, f.unit) + '</select></label></div>' +
-    '<label class="f"><span>Where is it kept?</span><select class="inp" id="f_storage">' + opts(STORAGE, f.storage) + '</select></label>' +
-    '<label class="f"><span>Attachment · photo of the product <span style="color:var(--red)">(compulsory)</span></span></label>' +
-    '<div class="photo tall" id="f_photobox" data-a="shootProduct">' + (f.photo ? '<img src="' + photoSrc(f.photo) + '">' :
-      '<div><div style="font-size:34px">📷</div><div class="ph-t" style="font-size:14px">TAP TO TAKE PHOTO</div></div>') + '</div>' +
-    '<div style="height:14px"></div>' +
-    '<label class="f"><span>Notes <span class="muted">(optional)</span></span>' +
-    '<input class="inp" id="f_note" maxlength="200" value="' + h(f.note || '') + '" placeholder="e.g. opened for Saturday prep"></label>' +
-    '<label class="f"><span>Status</span><select class="inp" id="f_status">' + opts(['Active', 'Inactive'], f.status) + '</select></label>' +
-    '<div class="xs muted" style="margin-top:-8px">Inactive keeps the record and still lists it, but leaves it out of the alerts and the compliance score.</div>' +
+    '<div class="xs muted">Tap a chip to set the expiry that many days after the MFG date.</div>' +
     '</div>' +
     '<div class="sec-t">Label</div>' +
     '<div class="card">' +
@@ -13886,11 +13869,13 @@ function writeLabel(p) {
     (p.color ? '<div class="r"><span class="k">Colour</span><span class="v">' +
       '<span style="display:inline-block;width:13px;height:13px;border-radius:4px;border:1px solid #bbb;vertical-align:-2px;margin-right:6px;background:' +
       labelColor(p.color) + '"></span>' + h(p.color) + '</span></div>' : '') +
-    '<div class="r"><span class="k">Opened</span><span class="v">' + fmtD(p.opened) + '</span></div>' +
+    '<div class="r"><span class="k">MFG date</span><span class="v">' + fmtD(p.opened) + '</span></div>' +
     '<div class="r"><span class="k">Use by</span><span class="v big"><span class="hl">' + fmtD(p.expiry) + '</span></span></div>' +
-    '<div class="r"><span class="k">Batch</span><span class="v">' + h(p.batch) + '</span></div>' +
-    '<div class="r"><span class="k">Keep in</span><span class="v">' + h(p.storage) + '</span></div>' +
-    '<div class="r"><span class="k">Initials</span><span class="v">' + h(p.initials) + '</span></div>' +
+    /* A record made on the short form has no batch or storage; an older one
+       still does, and still prints it. */
+    (p.batch ? '<div class="r"><span class="k">Batch</span><span class="v">' + h(p.batch) + '</span></div>' : '') +
+    (p.storage ? '<div class="r"><span class="k">Keep in</span><span class="v">' + h(p.storage) + '</span></div>' : '') +
+    (p.initials ? '<div class="r"><span class="k">Initials</span><span class="v">' + h(p.initials) + '</span></div>' : '') +
     '</div>';
 }
 function labelHTML(p) {
@@ -13900,10 +13885,10 @@ function labelHTML(p) {
     '<div class="qr">' + QR.svg(labelPayload(p), 104, 1) + '<div style="font-size:8px;text-align:center;font-weight:700;margin-top:2px">' + h(labelCode(p)) + '</div></div>' +
     '<div class="f"><div class="nm">' + h(p.name) + '</div>' +
     (p.type ? '<div class="kv"><b>Type:</b> ' + h(p.type) + '</div>' : '') +
-    '<div class="kv"><b>Prepared:</b> ' + fmtD(p.opened) + '</div>' +
-    '<div class="kv"><b>Batch:</b> ' + h(p.batch) + ' · ' + p.qty + ' ' + p.unit + '</div>' +
-    '<div class="kv"><b>Storage:</b> ' + h(p.storage) + '</div>' +
-    '<div class="kv"><b>Staff:</b> ' + h(p.initials) + ' · ' + h(locById(p.loc).code) + '</div>' +
+    '<div class="kv"><b>MFG:</b> ' + fmtD(p.opened) + '</div>' +
+    (p.batch ? '<div class="kv"><b>Batch:</b> ' + h(p.batch) + ' · ' + p.qty + ' ' + h(p.unit) + '</div>' : '') +
+    (p.storage ? '<div class="kv"><b>Storage:</b> ' + h(p.storage) + '</div>' : '') +
+    '<div class="kv"><b>Staff:</b> ' + h(p.initials || '—') + ' · ' + h((locById(p.loc) || {}).code || '') + '</div>' +
     '<div class="exp">USE BY: ' + fmtD(p.expiry).toUpperCase() + '</div>' +
     '<div class="brand">BOOKENDS · ' + h(lname(p.loc)).toUpperCase() + '</div></div></div>';
 }
@@ -16137,37 +16122,43 @@ document.addEventListener('input', function (ev) {
 function saveProduct() {
   var g = function (id) { var el = document.getElementById(id); return el ? el.value : ''; };
   var name = g('f_name').trim();
-  if (!name) { toast('Label name is required'); return; }
-  var code = g('f_code').trim().toUpperCase();
-  if (!code) { toast('Label code is required'); return; }
+  if (!name) { toast('Enter a name'); return; }
+  var mfg = g('f_opened'), expiry = g('f_expiry');
+  if (!mfg) { toast('Enter the MFG date'); return; }
+  if (!expiry) { toast('Enter the expiry date'); return; }
+  if (parseD(expiry) < parseD(mfg)) { toast('Expiry cannot be before the MFG date'); return; }
   var id = window._formId;
-  /* Two containers carrying the same code would both answer to one scan. */
-  var clash = DB.products.filter(function (x) { return x.id !== id && labelCode(x).toUpperCase() === code; })[0];
-  if (clash) { toast('That label code is already used by ' + clash.name); return; }
-  if (!g('f_cat')) { toast('Choose a category'); return; }
-  if (parseD(g('f_expiry')) < parseD(g('f_opened'))) { toast('Expiry cannot be before the start date'); return; }
-  if (!window._form.photo) { toast('Take a photo of the product first'); return; }
+
   if (id) {
+    /* Only the three are written. Everything else this record carries stays as
+       it is — a record made when the form asked for more must not lose its
+       batch, its storage or its photo just because the form no longer asks. */
     var p = DB.products.filter(function (x) { return x.id === id; })[0];
-    p.name = name; p.code = code; p.cat = g('f_cat'); p.type = g('f_type'); p.desc = g('f_desc').trim();
-    p.color = g('f_color'); p.status = g('f_status');
-    p.batch = g('f_batch'); p.qty = +g('f_qty'); p.unit = g('f_unit');
-    p.opened = g('f_opened'); p.expiry = g('f_expiry'); p.storage = g('f_storage'); p.note = g('f_note').trim();
-    if (window._form.photo) p.photo = window._form.photo;
+    p.name = name; p.opened = mfg; p.expiry = expiry;
     save('products', p); logAct('product', 'Updated: ' + p.name, p.loc); closeSheet(); render(); toast('Label updated');
-  } else {
-    var loc = window._formLoc;
-    var np = {
-      id: window._formNewId || newProductId(loc), loc: loc, name: name, code: code, cat: g('f_cat'),
-      type: g('f_type'), desc: g('f_desc').trim(), color: g('f_color'), status: g('f_status'),
-      batch: g('f_batch'), qty: +g('f_qty'), unit: g('f_unit'), opened: g('f_opened'), expiry: g('f_expiry'),
-      storage: g('f_storage'), note: g('f_note').trim(), photo: window._form.photo || null, labelled: false, labelledAt: null,
-      by: ME.id, initials: initials(ME.name), createdAt: Date.now()
-    };
-    DB.products.push(np); save('products', np); logAct('product', 'Added: ' + np.name, loc);
-    uploadProductPhoto(np);
-    closeSheet(); render(); labelSheet(np.id); toast('Added — print the label now');
+    return;
   }
+
+  var loc = window._formLoc;
+  /* The code is generated, never typed, so it cannot clash — but it is still
+     checked, because a scan that matched two containers would be worse than a
+     save that failed. */
+  var code = window._formNewId || newProductId(loc);
+  while (DB.products.some(function (x) { return labelCode(x).toUpperCase() === code.toUpperCase(); })) {
+    code = newProductId(loc);
+  }
+  var np = {
+    id: code, loc: loc, name: name, code: code,
+    opened: mfg, expiry: expiry,
+    /* Not asked for any more; kept on the record so everything that reads a
+       product still finds the shape it expects. */
+    cat: '', type: '', desc: '', color: '', status: 'Active',
+    batch: '', qty: 1, unit: 'kg', storage: '', note: '', photo: null,
+    labelled: false, labelledAt: null,
+    by: ME.id, initials: initials(ME.name), createdAt: Date.now()
+  };
+  DB.products.push(np); save('products', np); logAct('product', 'Added: ' + np.name, loc);
+  closeSheet(); render(); labelSheet(np.id); toast('Added — print the label now');
 }
 
 document.addEventListener('keydown', function (ev) {
