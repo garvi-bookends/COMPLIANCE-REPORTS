@@ -13553,8 +13553,13 @@ function labelSheet(id) {
   var body = (p.photo ? '<div class="card pad0" style="overflow:hidden"><img src="' + photoSrc(p.photo) +
       '" alt="" style="display:block;width:100%;height:190px;object-fit:cover"></div>' : '') +
     labelTable(p) +
-    (perm().readonly ? '' : '<button class="btn ' + (p.labelled ? 'sec' : 'ok') + '" style="margin-top:12px" data-a="markLabelled" data-x="' + p.id + '">' +
-      (p.labelled ? '✓ Label already applied — confirm again' : '✓ I have written it and stuck it on') + '</button>');
+    /* Only offered while there is something to record. Confirming a label that
+       is already applied changed nothing and asked anyway. */
+    (perm().readonly || p.labelled ? '' : '<button class="btn ok" style="margin-top:12px" data-a="markLabelled" data-x="' + p.id + '">' +
+      '✓ I have written it and stuck it on</button>') +
+    '<div class="btnrow" style="margin-top:10px">' +
+    (perm().readonly ? '' : '<button class="btn sec" data-a="editProduct" data-x="' + h(p.id) + '">Edit</button>') +
+    '<button class="btn" data-a="closeSheet">Done</button></div>';
   openSheet(p.name, body);
 }
 function printNode(html) {
