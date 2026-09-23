@@ -15207,11 +15207,17 @@ function serviceHasLiveWork(tk) {
 }
 function jobsSection(t) {
   var all = jobsOfType(t.id);
-  /* Named, because the services table sits on the same page. */
-  var active = all.filter(function (x) { return !jobFinished(x); });
+  /* Active is work somebody is still expected to do, so it takes only jobs
+     whose service is still there. A deleted service's unfinished work is
+     nobody's job any more — it is not active, and it is not completed either;
+     it stays in Task Review, which is the record of what was sent in.
+     Completed keeps everything approved, deleted service or not: that is
+     history and does not depend on the schedule still existing. */
+  var active = all.filter(function (x) { return !jobFinished(x) && taskLive(x); });
   var done = all.filter(jobFinished);
   var list = MGMT_JOBS === 'done' ? done : active;
 
+  /* Named, because the services table sits on the same page. */
   var html = '<div id="mg_jobs"><div class="sec-t">Jobs · ' + list.length + '</div>';
   html += '<div class="chips">' +
     [['active', 'Active ' + active.length], ['done', 'Completed ' + done.length]].map(function (c) {
