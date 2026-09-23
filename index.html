@@ -13473,7 +13473,7 @@ function productForm(id) {
     '</div>' +
     '<div class="btnrow">' +
     '<button class="btn sec" data-a="closeSheet">Cancel</button>' +
-    '<button class="btn" data-a="saveProduct">' + (id ? 'Save changes' : 'Save label') + '</button></div>';
+    '<button class="btn" data-a="saveProduct">' + (id ? 'Save changes' : 'Done') + '</button></div>';
   /* One record, two doors into it: the title says which one you came through. */
   var noun = S.tab === 'exp' ? 'expiry date' : 'label';
   openSheet(id ? 'Edit ' + noun : 'Add ' + noun + ' · ' + lname(loc), body);
