@@ -13177,6 +13177,25 @@ function openSheet(title, body, extraClass) {
 function closeSheet() { SHEET_STACK = []; $('#modal').innerHTML = ''; document.body.style.overflow = ''; }
 
 /* ---------------- CLEANING ---------------- */
+/* The one line that says where a job stands: waiting on the Super Admin,
+   signed off by whom, or sent back and why. Shared by every list that shows
+   jobs, so they read the same. */
+function decisionLine(t) {
+  if (t.status === 'rejected') {
+    return '<div class="xs" style="color:var(--red);margin-top:4px">Sent back by ' + h(uname(t.approvedBy)) +
+      (t.approvedAt ? ' · ' + h(fmtD(ymd(new Date(t.approvedAt)))) : '') +
+      (t.reject ? ' — ' + h(t.reject) : '') + '</div>';
+  }
+  if (t.status === 'completed' && t.approved === true) {
+    return '<div class="xs muted" style="margin-top:4px">Approved by ' + h(uname(t.approvedBy)) +
+      (t.approvedAt ? ' · ' + h(fmtD(ymd(new Date(t.approvedAt)))) : '') + '</div>';
+  }
+  if (t.status === 'completed') {
+    return '<div class="xs muted" style="margin-top:4px">Sent in by ' + h(uname(t.completedBy)) +
+      (t.completedAt ? ' · ' + h(fmtD(ymd(new Date(t.completedAt)))) : '') + ' — waiting on the Super Admin</div>';
+  }
+  return '';
+}
 function taskRow(t) {
   var ph = t.before || t.after;
   var row = '<button class="lrow" data-a="task" data-x="' + t.id + '">' +
@@ -13188,6 +13207,9 @@ function taskRow(t) {
     statusPill(t) + (t.freq === 'M' ? ' ' + pill('MONTHLY', 'p-blu') : '') +
     (fixedDay(t) != null ? ' ' + pill('EVERY ' + DAY_NAMES[fixedDay(t)].toUpperCase(), 'p-yel') : '') +
     (missingPhoto(t) ? ' ' + pill('NO PHOTO', 'p-org') : '') +
+    /* What happened to it, in the same words Job Management and Task Review
+       use, so the three views never seem to disagree. */
+    decisionLine(t) +
     '</span><span class="chev">›</span></button>';
   return row;
 }
@@ -14639,7 +14661,7 @@ function renderTaskReview() {
   });
 
   html += '<div class="sec-t">Sent for approval · ' + shown.length + (shown.length !== all.length ? ' of ' + all.length : '') + '</div>';
-  html += mgTable(['User', 'Task / Service', 'Project', 'Area', 'Restaurant', 'Completed date', 'Completed time', 'Status', 'Actions'],
+  html += mgTable(['User', 'Task / Service', 'Project', 'Area', 'Restaurant', 'Assigned to', 'Due', 'Completed date', 'Completed time', 'Status', 'Actions'],
     shown.map(function (t) {
       var st = reviewState(t);
       return '<tr>' +
@@ -14649,6 +14671,8 @@ function renderTaskReview() {
         '<td class="sm">' + h(jobTypeName(taskJobType(t))) + '</td>' +
         '<td class="sm muted">' + h(t.zone || '—') + '</td>' +
         '<td class="sm">' + h(lname(t.loc)) + '</td>' +
+        '<td class="sm">' + h(shortAssignees(t)) + '</td>' +
+        '<td class="sm">' + h(fmtD(t.due)) + '</td>' +
         '<td class="sm">' + h(fmtDateOf(t.completedAt)) + '</td>' +
         '<td class="sm">' + h(fmtClock(t.completedAt)) + '</td>' +
         '<td>' + statusPill(t) +
