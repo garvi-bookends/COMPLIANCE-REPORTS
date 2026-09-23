@@ -13389,10 +13389,8 @@ function productSheet(id) {
     kv('MFG date', fmtD(p.opened)) + kv('Expiry date', fmtD(p.expiry)) +
     kv('Added by', uname(p.by)) + '</div>';
   if (st.k === 'expired') body += '<div class="card" style="background:#fdecea;border-color:#f6c9c4"><b class="sm">🔴 Do not use. Discard and record wastage.</b></div>';
-  body += '<div class="sec-t">Label status</div><div class="card"><div class="row">' +
-    '<div class="grow sm b">' + (p.labelled ? '✓ Labelled ' + fmtD(ymd(new Date(p.labelledAt))) : '✕ No label generated yet') + '</div>' +
-    pill(p.labelled ? 'COMPLIANT' : 'NON-COMPLIANT', p.labelled ? 'p-grn' : 'p-red') + '</div>' +
-    '<button class="btn" style="margin-top:12px" data-a="label" data-x="' + p.id + '">🏷 ' + (p.labelled ? 'Reprint label &amp; QR' : 'Generate label &amp; QR') + '</button></div>';
+  /* The label-status card was taken off this sheet. Its only action was to
+     generate or reprint a label and its QR, and there is neither any more. */
   if (can) {
     body += '<div class="btnrow" style="margin-top:10px">' +
       '<button class="btn sec" data-a="editProduct" data-x="' + p.id + '">Edit</button>' +
