@@ -15208,6 +15208,15 @@ function servicesOfType(id, loc) {
   return checklistJobs(null, loc).filter(function (j) { return (j.jobType || 'cleaning') === id; });
 }
 
+/* What is actually under a job type. Cleaning has services; Labelling and
+   Expiry Date have the product records people add, and counting services
+   there showed a 0 that was true and useless. */
+function typeCount(id) {
+  if (id === 'labelling') return { n: DB.products.length, what: DB.products.length === 1 ? 'label' : 'labels' };
+  if (id === 'expiry-date') return { n: DB.products.length, what: DB.products.length === 1 ? 'item' : 'items' };
+  var n = servicesOfType(id, null).length;
+  return { n: n, what: n === 1 ? 'service' : 'services' };
+}
 function renderJobManagement() {
   var types = jobTypes();
   var html = mgHead('JOB MANAGEMENT', 'Management · Super Admin', ['mgmtBack', 'Dashboard']);
@@ -15232,17 +15241,17 @@ function renderJobManagement() {
   });
 
   html += '<div class="sec-t">Job types · ' + shown.length + (shown.length !== types.length ? ' of ' + types.length : '') + '</div>';
-  html += mgTable(['Name', 'Description', 'Services', 'Status', 'Actions'],
+  html += mgTable(['Name', 'Description', 'Under it', 'Status', 'Actions'],
     shown.map(function (t) {
-      var n = servicesOfType(t.id, null).length;
+      var c = typeCount(t.id);
       return '<tr>' +
         '<td><button class="linkish b" data-a="openType" data-x="' + h(t.id) + '">' + h(t.name) + '</button>' +
         (t.builtin ? '<div class="xs muted">built in</div>' : '') + '</td>' +
         '<td class="sm muted">' + (t.description ? h(t.description) : '—') + '</td>' +
-        '<td class="sm">' + n + '</td>' +
+        '<td class="sm"><b>' + c.n + '</b> <span class="muted">' + h(c.what) + '</span></td>' +
         '<td>' + pill(t.active ? 'ACTIVE' : 'INACTIVE', t.active ? 'p-grn' : 'p-red') + '</td>' +
         '<td class="nowrap">' +
-          mgBtn('openType', t.id, '📋', 'Open services') +
+          mgBtn('openType', t.id, '📋', 'Open ' + c.what) +
           mgBtn('editJobType', t.id, '✏️', 'Edit job type') +
           mgBtn('toggleJobType', t.id, t.active ? '⏸' : '▶', t.active ? 'Deactivate' : 'Activate') +
           (t.builtin ? '' : mgBtn('delJobType', t.id, '✕', 'Delete job type', 'background:#f6e7e5;color:var(--red)')) +
