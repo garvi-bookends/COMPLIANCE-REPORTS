@@ -14627,7 +14627,9 @@ function reviewState(t) {
 }
 function tasksSentIn() {
   return DB.tasks.filter(function (t) {
-    return (t.status === 'completed' || t.status === 'rejected') && taskLive(t);
+    /* No liveness test: a job that was sent in is history, and history does
+       not disappear because the service it came from was switched off. */
+    return t.status === 'completed' || t.status === 'rejected';
   }).sort(function (a, b) {
     /* Waiting first — it is the work that still needs someone — then newest. */
     var aw = reviewState(a) === 'waiting', bw = reviewState(b) === 'waiting';
@@ -15178,7 +15180,9 @@ function renderTypeServices() {
    another phone and this page all read the same thing. */
 function jobsOfType(typeId) {
   return DB.tasks.filter(function (t) {
-    return taskJobType(t) === typeId && taskLive(t);
+    /* Live work, plus anything anyone has actually done — that part is a
+       record and is kept whatever happens to the service afterwards. */
+    return taskJobType(t) === typeId && (taskLive(t) || taskRecorded(t));
   }).sort(function (a, b) {
     /* Anything waiting on somebody first, then by the day it is due. */
     var ap = a.status === 'completed' && !a.approved, bp = b.status === 'completed' && !b.approved;
