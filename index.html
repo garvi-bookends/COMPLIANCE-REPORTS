@@ -13799,7 +13799,6 @@ function renderReports() {
   var v = violations(scope, weeks);
   html += '<div class="sec-t">Violations</div><div class="grid3">' +
     statCard(v.clean.length, 'Cleaning', 'var(--red)') + statCard(v.exp.length, 'Expiry', 'var(--org)') + statCard(v.lab.length, 'Labelling', 'var(--yel)') + '</div>';
-  html += vioBlock('Cleaning violations', v.clean) + vioBlock('Expiry violations', v.exp) + vioBlock('Labelling violations', v.lab);
 
   /* staff compliance */
   html += '<div class="sec-t">Staff compliance</div><div class="card pad0"><div class="scroll-x"><table class="tbl">' +
@@ -13865,14 +13864,8 @@ function violations(scope, weeks) {
   });
   return v;
 }
-function vioBlock(title, list) {
-  if (!list.length) return '<div class="sec-t">' + title + '</div><div class="card sm muted center">None recorded ✓</div>';
-  return '<div class="sec-t">' + title + ' (' + list.length + ')</div><div class="card pad0">' +
-    list.slice(0, 12).map(function (x) {
-      return '<button class="lrow" data-a="' + (x.prod ? 'product' : 'task') + '" data-x="' + x.id + '"><span class="grow">' +
-        '<span class="t sm trunc">' + h(x.t) + '</span><div class="xs muted">' + h(lname(x.loc)) + ' · ' + h(x.d) + '</div></span><span class="chev">›</span></button>';
-    }).join('') + (list.length > 12 ? '<div class="xs muted center" style="padding:9px">+' + (list.length - 12) + ' more in the exported report</div>' : '') + '</div>';
-}
+/* The three lists that used to follow the counts were taken off the report.
+   violations() still feeds the counts above. */
 function staffStats(scope, weeks) {
   var m = {};
   scope.forEach(function (L) {
