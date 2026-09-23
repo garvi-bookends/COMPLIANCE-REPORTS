@@ -12439,7 +12439,7 @@ function header(title, sub) {
   if (S.tab !== 'home' || perm().all) {
     locSel = '<div class="locbar"><select id="locsel">' +
       /* Offered wherever a page can hold every kitchen at once. */
-      (perm().all && (S.tab === 'home' || S.tab === 'rep' || S.tab === 'exp') ? '<option value="ALL"' + (S.loc === 'ALL' ? ' selected' : '') + '>All 8 locations</option>' : '') +
+      (perm().all && (S.tab === 'home' || S.tab === 'rep' || S.tab === 'exp' || S.tab === 'lab') ? '<option value="ALL"' + (S.loc === 'ALL' ? ' selected' : '') + '>All 8 locations</option>' : '') +
       ['Surat', 'Ahmedabad'].map(function (city) {
         var ls = vis.filter(function (l) { return l.city === city; });
         if (!ls.length) return '';
@@ -13528,9 +13528,10 @@ function productForm(id) {
 /* ---------------- LABELS ---------------- */
 function renderLabels() {
   var loc = S.loc, ps = productsFor(loc), e = expiryStats(loc);
+  var manyLocs = loc === 'ALL';
   var f = S.labFilter;
   var list = ps.filter(function (p) { return f === 'all' || (f === 'missing' ? !p.labelled : p.labelled); });
-  var html = header('PRODUCT LABELLING', lname(loc));
+  var html = header('PRODUCT LABELLING', manyLocs ? 'All ' + visibleLocations().length + ' kitchens' : lname(loc));
   html += '<div class="wrap">' +
     '<div class="card"><div class="row"><div>' + ring(e.labelPct, 76, 9) + '</div><div class="grow">' +
     '<div class="b">Labelling compliance</div><div class="sm muted">' + e.labelled + ' of ' + ps.length + ' containers have a label written and applied</div>' +
@@ -13543,7 +13544,7 @@ function renderLabels() {
     return '<button class="lrow" data-a="label" data-x="' + p.id + '">' +
       '<span class="thumb" style="display:grid;place-items:center;font-size:19px;background:' + (p.labelled ? '#e6f5ee' : '#fdecea') + '">' + (p.labelled ? '🏷' : '⚠️') + '</span>' +
       '<span class="grow"><span class="t trunc">' + h(p.name) + '</span>' +
-      '<div class="xs muted" style="margin:2px 0 5px">use by ' + fmtD(p.expiry) + '</div>' +
+      '<div class="xs muted" style="margin:2px 0 5px">' + (manyLocs ? h(lname(p.loc)) + ' · ' : '') + 'use by ' + fmtD(p.expiry) + '</div>' +
       pill(p.labelled ? 'LABEL OK' : 'LABEL MISSING', p.labelled ? 'p-grn' : 'p-red') + ' ' + pill(st.emoji + ' ' + st.label, st.cls) +
       (isActive(p) ? '' : ' ' + pill('INACTIVE', 'p-gry')) +
       '</span><span class="chev">›</span></button>';
@@ -15476,8 +15477,11 @@ function render() {
   GUEST_LOCS = null;
   if (S.loc && S.loc !== 'ALL' && !locById(S.loc)) S.loc = null;
   if (S.loc === 'ALL' && !perm().all) S.loc = ME.loc || visibleLocations()[0].id;
-  if (S.tab !== 'home' && S.tab !== 'rep' && S.tab !== 'manage' && S.tab !== 'exp' && S.loc === 'ALL') S.loc = visibleLocations()[0].id;
-  if (S.tab === 'exp' && S.loc === 'ALL' && !perm().all) S.loc = ME.loc || visibleLocations()[0].id;
+  /* Stock is stock wherever it sits, so the Expiry and Labelling pages can
+     hold every kitchen at once. Cleaning cannot: a clean belongs to a room. */
+  var spansLocs = S.tab === 'exp' || S.tab === 'lab';
+  if (S.tab !== 'home' && S.tab !== 'rep' && S.tab !== 'manage' && !spansLocs && S.loc === 'ALL') S.loc = visibleLocations()[0].id;
+  if (spansLocs && S.loc === 'ALL' && !perm().all) S.loc = ME.loc || visibleLocations()[0].id;
   /* A section this account's job types do not cover is not reachable, however
      it was arrived at — a stale tab from the last session, a deep link, an old
      button. The nav hides it; this is what makes it true. */
