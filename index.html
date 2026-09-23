@@ -11640,7 +11640,31 @@ function visibleLocations() {
   var mine = guestLocations();
   return LOCATIONS.filter(function (l) { return l.id === ME.loc || mine.indexOf(l.id) > -1; });
 }
-function logAct(type, text, loc) { DB.log.unshift({ t: Date.now(), type: type, text: text, loc: loc, by: ME ? ME.id : null }); DB.log = DB.log.slice(0, 300); }
+/* The audit log: who did what, where, and when.
+
+   Thirty days is the window. The entry cap on top of it is not a second
+   opinion about how long to keep things — it is there because the whole
+   database lives in localStorage beside the photos waiting to upload, and one
+   runaway day must not fill it and stop the app saving anything at all.
+
+   It is written to disk here. It used to be left in memory for some later
+   save() to carry, so an entry made on a screen that wrote nothing else —
+   creating a user, say — was gone on the next refresh. */
+var LOG_DAYS = 30;
+var LOG_MAX = 2000;
+var LOG_TYPES = {
+  user: 'Users', clean: 'Cleaning', product: 'Products', photo: 'Photos',
+  reject: 'Rejected', label: 'Labels', approve: 'Approved'
+};
+function pruneLog(list) {
+  var cutoff = Date.now() - LOG_DAYS * 86400000;
+  return (list || []).filter(function (l) { return l && l.t >= cutoff; }).slice(0, LOG_MAX);
+}
+function logAct(type, text, loc) {
+  DB.log.unshift({ t: Date.now(), type: type, text: text, loc: loc, by: ME ? ME.id : null });
+  DB.log = pruneLog(DB.log);
+  saveLocal();
+}
 
 /* ---------------- compliance maths ---------------- */
 /* Everything due at a location "right now": this week's weekly jobs + this month's heavy jobs.
@@ -13304,7 +13328,7 @@ function meSheet() {
        have no Management menu, so they keep these. */
     (!p.superadmin && p.manage ? '<button class="btn sec" data-a="users" style="margin-bottom:10px">👥 People, roles &amp; passwords</button>' +
       '<button class="btn sec" data-a="checklist" style="margin-bottom:10px">📋 Cleaning checklist</button>' : '') +
-    (p.manage ? '<button class="btn sec" data-a="activity" style="margin-bottom:10px">🕘 Recent activity</button>' : '') +
+    (p.manage ? '<button class="btn sec" data-a="activity" style="margin-bottom:10px">🕘 Audit log</button>' : '') +
     '<button class="btn sec" data-a="help" style="margin-bottom:10px">❓ How to use the app</button>' +
     '<button class="btn sec" data-a="install" style="margin-bottom:10px">📲 Add to home screen</button>' +
     '<button class="btn sec" data-a="about" style="margin-bottom:10px">ℹ️ About &amp; version</button>' +
@@ -13356,13 +13380,80 @@ function aboutSheet() {
 }
 
 /* ---------- activity log ---------- */
+var LOG_FILTER = '', LOG_Q = '';
+/* Shown in full: what happened, who did it, which kitchen, and the date and
+   time to the minute. Rendering is capped well below the 30 days a busy group
+   can produce — the search and the filters are how you reach the rest. */
+var LOG_SHOW = 300;
+function wireLogSearch() {
+  var q = document.getElementById('log_q');
+  if (!q) return;
+  q.addEventListener('input', function () {
+    LOG_Q = this.value;
+    var box = document.getElementById('log_list');
+    if (box) box.innerHTML = activityRows(activityList());
+    var n = document.getElementById('log_count');
+    if (n) n.textContent = activityCountText();
+  });
+}
 function activitySheet() {
-  var log = (DB.log || []).slice(0, 60);
-  openSheet('Recent activity',
-    '<div class="card pad0">' + (log.length ? log.map(function (l) {
-      return '<div class="lrow"><span class="grow"><span class="t sm">' + h(l.text) + '</span>' +
-        '<div class="xs muted">' + h(l.by ? uname(l.by) : 'System') + (l.loc ? ' · ' + h(lname(l.loc)) : '') + ' · ' + fmtDT(l.t) + '</div></span></div>';
-    }).join('') : '<div class="empty"><div class="ic">🕘</div>Nothing recorded yet</div>') + '</div>');
+  openSheet('Audit log', activityBody());
+  wireLogSearch();
+}
+function activityList() {
+  DB.log = pruneLog(DB.log);
+  var q = (LOG_Q || '').toLowerCase();
+  return DB.log.filter(function (l) {
+    if (LOG_FILTER && l.type !== LOG_FILTER) return false;
+    if (!q) return true;
+    var who = l.by ? uname(l.by) : 'System';
+    var where = l.loc ? lname(l.loc) : '';
+    return (l.text + ' ' + who + ' ' + where + ' ' + (LOG_TYPES[l.type] || l.type)).toLowerCase().indexOf(q) > -1;
+  });
+}
+function activityCountText() {
+  var n = activityList().length, all = DB.log.length;
+  return n === all ? n + ' entr' + (n === 1 ? 'y' : 'ies') : n + ' of ' + all;
+}
+function activityRows(list) {
+  if (!list.length) {
+    return '<div class="empty"><div class="ic">🕘</div>' +
+      (LOG_Q || LOG_FILTER ? 'Nothing matches' : 'Nothing recorded yet') + '</div>';
+  }
+  var out = list.slice(0, LOG_SHOW).map(function (l) {
+    var when = new Date(l.t);
+    return '<div class="lrow"><span class="grow">' +
+      '<span class="t sm">' + h(l.text) + '</span>' +
+      '<div class="xs muted" style="margin-top:3px">' +
+      pill(LOG_TYPES[l.type] || l.type, 'p-gry') + ' ' +
+      h(l.by ? uname(l.by) : 'System') +
+      ' · ' + h(l.loc && l.loc !== 'ALL' && locById(l.loc) ? lname(l.loc) : 'all kitchens') +
+      ' · ' + h(fmtD(ymd(when))) + ' ' + h(fmtClock(l.t)) +
+      '</div></span></div>';
+  }).join('');
+  if (list.length > LOG_SHOW) {
+    out += '<div class="sm muted center" style="padding:12px">Showing the newest ' + LOG_SHOW +
+      ' of ' + list.length + '. Search to narrow it down.</div>';
+  }
+  return out;
+}
+function activityBody() {
+  DB.log = pruneLog(DB.log);
+  var counts = {};
+  DB.log.forEach(function (l) { counts[l.type] = (counts[l.type] || 0) + 1; });
+  var chips = [['', 'All ' + DB.log.length]].concat(Object.keys(LOG_TYPES)
+    .filter(function (k) { return counts[k]; })
+    .map(function (k) { return [k, LOG_TYPES[k] + ' ' + counts[k]]; }));
+  return '<div class="card">' +
+    '<div class="sm muted">Everything this device has recorded for the last ' + LOG_DAYS + ' days: ' +
+    'what changed, who changed it, which kitchen, and when. Older entries are removed automatically.</div>' +
+    '<label class="f" style="margin-top:12px"><span>Search</span>' +
+    '<input class="inp" id="log_q" placeholder="Name, kitchen or what changed" value="' + h(LOG_Q) + '"></label>' +
+    '<div class="chips">' + chips.map(function (c) {
+      return '<button class="chip' + (LOG_FILTER === c[0] ? ' on' : '') + '" data-a="logFilter" data-x="' + h(c[0]) + '">' + h(c[1]) + '</button>';
+    }).join('') + '</div>' +
+    '<div class="xs muted" id="log_count">' + activityCountText() + '</div></div>' +
+    '<div class="card pad0" id="log_list">' + activityRows(activityList()) + '</div>';
 }
 
 /* =====================================================================
@@ -15744,7 +15835,14 @@ document.addEventListener('click', function (ev) {
       break;
     case 'help': closeSheet(); helpSheet(); break;
     case 'about': closeSheet(); aboutSheet(); break;
-    case 'activity': closeSheet(); activitySheet(); break;
+    case 'activity': closeSheet(); LOG_FILTER = ''; LOG_Q = ''; activitySheet(); break;
+    case 'logFilter': {
+      LOG_FILTER = x || '';
+      /* Redraw inside the open sheet rather than stacking a second one on it. */
+      var lb = document.querySelector('#modal .sheet-b');
+      if (lb) { lb.innerHTML = activityBody(); wireLogSearch(); }
+      break;
+    }
     case 'install': closeSheet(); installSheet(); break;
     case 'doInstall': doInstall(); break;
     case 'reset':
