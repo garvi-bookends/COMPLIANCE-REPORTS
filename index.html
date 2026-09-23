@@ -3755,9 +3755,36 @@ function stopScan() {
   if (_scanTimer) { clearInterval(_scanTimer); _scanTimer = null; }
   if (_scanStream) { _scanStream.getTracks().forEach(function (t) { t.stop(); }); _scanStream = null; }
 }
+/* Why the camera did not open, in the words of whoever has to fix it. The
+   browser reports these very differently and the old code called them all
+   "permission denied", which sent people to a setting that was already right.
+   The one that matters in a kitchen: a phone opening the app over plain http
+   is refused the camera by the browser itself, and no permission can change
+   that — the address has to be https. */
+function cameraProblem(err) {
+  if (!window.isSecureContext && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
+    return 'The camera only works on a secure (https) address. This page was opened over http, so the browser will not allow it. Open the app at its https address, or type the label code below.';
+  }
+  var name = err && err.name;
+  if (name === 'NotAllowedError' || name === 'PermissionDeniedError') {
+    return 'The camera is blocked for this site. Tap the padlock (or ⓘ) next to the address, set Camera to Allow, then tap Try again.';
+  }
+  if (name === 'NotFoundError' || name === 'DevicesNotFoundError' || name === 'OverconstrainedError') {
+    return 'No camera was found on this device. Type the label code below.';
+  }
+  if (name === 'NotReadableError' || name === 'TrackStartError') {
+    return 'Another app is using the camera. Close it, then tap Try again.';
+  }
+  return 'The camera could not be started' + (name ? ' (' + name + ')' : '') + '. Type the label code below.';
+}
+function scanFailed(text) {
+  var msg = document.getElementById('scanmsg');
+  if (!msg) return;
+  msg.innerHTML = h(text) + '<div style="margin-top:10px"><button class="btn sec" data-a="scanRetry" style="width:auto;padding:8px 14px">Try again</button></div>';
+}
 function startScan() {
   var msg = document.getElementById('scanmsg'), vid = document.getElementById('scanvid');
-  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { msg.textContent = 'Camera not available on this device.'; return; }
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { scanFailed(cameraProblem(null)); return; }
   navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } }).then(function (s) {
     _scanStream = s; vid.srcObject = s; vid.play();
     if (!('BarcodeDetector' in window)) { msg.textContent = 'Point at the label QR. (No decoder in this browser — type the code below.)'; return; }
@@ -3768,7 +3795,7 @@ function startScan() {
         if (codes && codes.length) { stopScan(); handleScan(codes[0].rawValue); }
       }).catch(function () { });
     }, 400);
-  }).catch(function () { msg.textContent = 'Camera permission denied. Type the label code below.'; });
+  }).catch(function (err) { scanFailed(cameraProblem(err)); });
 }
 /* Product ids used to be kitchen code + a count of products on that phone,
    so two phones could make the same id and one product would overwrite the
@@ -5661,6 +5688,13 @@ document.addEventListener('click', function (ev) {
     case 'label': closeSheet(); labelSheet(x); break;
     case 'scan': closeSheet(); scanSheet(); break;
     case 'scanGo': handleScan(document.getElementById('scanmanual').value); break;
+    /* After allowing the camera, or closing whatever was holding it. */
+    case 'scanRetry': {
+      var sm = document.getElementById('scanmsg');
+      if (sm) sm.textContent = 'Starting camera…';
+      stopScan(); startScan();
+      break;
+    }
     case 'shoot': {
       var t2 = T(x);
       capture(function (data) { setPhoto(t2, 'before', data); logAct('photo', 'photo added: ' + cleanName(t2), t2.loc); taskSheet(t2.id); toast('Photo saved'); });
