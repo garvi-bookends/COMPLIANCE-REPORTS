@@ -15116,10 +15116,10 @@ function renderTypeServices() {
   }
   html += '<button class="btn ok" data-a="addJob" data-x="' + h(t.id) + '" style="margin-top:12px">＋ Add Service</button>';
   html += mgSearchBox(MGMT_Q, 'Service name or area');
-  html += mgChips([['all', 'All ' + list.length],
-    ['noloc', 'Need restaurants ' + needsLocs.length],
-    ['one', 'One restaurant ' + list.filter(function (j) { return j.locs && j.locs.length === 1; }).length],
-    ['multi', 'Several ' + list.filter(function (j) { return j.locs && j.locs.length > 1; }).length]], MGMT_FILTER);
+  /* No chips for how many restaurants a service runs at. The Restaurants
+     column says that per service and the tile above counts the ones still
+     unset, so splitting the list four ways only got in the way of the two
+     controls people actually use here: search, and Assigned to. */
 
   /* Who a job belongs to. The Super Admin gives jobs out here, so the table
      narrows to one person rather than always showing every service. */
@@ -15135,9 +15135,6 @@ function renderTypeServices() {
     }).join('') + '</select></label>';
 
   var shown = list.filter(function (j) {
-    if (MGMT_FILTER === 'noloc' && !isAllOutlets(j)) return false;
-    if (MGMT_FILTER === 'one' && !(j.locs && j.locs.length === 1)) return false;
-    if (MGMT_FILTER === 'multi' && !(j.locs && j.locs.length > 1)) return false;
     if (MGMT_WHO === '__none' && assigneesOf(j).length) return false;
     if (MGMT_WHO && MGMT_WHO !== '__none' && assigneesOf(j).indexOf(MGMT_WHO) === -1) return false;
     return mgMatches([j.area, j.zone || '', assigneeNames(j)]);
