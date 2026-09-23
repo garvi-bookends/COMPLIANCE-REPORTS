@@ -14492,6 +14492,18 @@ var MGMT_BUSY = false;
 var MGMT_Q = '';                // search text, shared by both screens
 var MGMT_FILTER = 'all';
 var MGMT_WHO = '';              // Job Management: show one person's jobs, '' = everyone
+/* Job Management: the work under a job type, active or finished with. */
+var MGMT_JOBS = 'active';
+/* A job is live work until it has been approved. Sent in and waiting is still
+   live — somebody has to look at it; rejected is still live — it has to be
+   done again. Only an approval closes it, and only the Super Admin can
+   approve, so nothing on a phone can close a job by itself. */
+function jobFinished(t) { return t.status === 'completed' && t.approved === true; }
+function jobStatusText(t) {
+  if (t.status === 'rejected') return 'Rejected / needs rework';
+  if (t.status === 'completed') return t.approved ? 'Completed' : 'Pending approval';
+  return 'Active';
+}
 /* Open to begin with, so the Dashboard shows User Management and Job
    Management without anyone having to discover that the row expands. */
 
@@ -15098,7 +15110,7 @@ function renderTypeServices() {
     return mgMatches([j.area, j.zone || '', assigneeNames(j)]);
   });
   html += '<div class="sec-t">Services · ' + shown.length + '</div>';
-  html += mgTable(['Name', 'Area', 'Frequency', 'Restaurants', 'Assigned To', 'Status', 'Actions'],
+  html += '<div id="mg_services">' + mgTable(['Name', 'Area', 'Frequency', 'Restaurants', 'Assigned To', 'Status', 'Actions'],
     shown.map(function (j) {
       /* Every detail is editable in place — same mechanism for all of them. */
       return '<tr>' +
@@ -15116,7 +15128,9 @@ function renderTypeServices() {
         })() + '</td>' +
         '<td class="nowrap">' + mgBtn('deleteClean', j.tk, '✕', 'Delete service', 'background:#f6e7e5;color:var(--red)') + '</td>' +
         '</tr>';
-    }), 'No services under this job type yet');
+    }), 'No services under this job type yet') + '</div>';
+
+  html += jobsSection(t);
 
   html += '<div class="card sm muted" style="margin-top:12px">Double-click any detail — name, area, frequency, schedule, who it is assigned to, or status — to edit it in place. Restaurants opens a picker. ' +
     'Enter saves, Escape cancels.</div>';
@@ -15124,6 +15138,53 @@ function renderTypeServices() {
   mgWireSearch(renderTypeServices);
   var who = document.getElementById('mg_who');
   if (who) who.addEventListener('change', function () { MGMT_WHO = this.value; renderTypeServices(); });
+}
+
+/* The work itself, under the services that generate it: what is still live and
+   what has been signed off. A job leaves Active the moment it is approved and
+   never comes back on its own — the record carries the status, so a reload,
+   another phone and this page all read the same thing. */
+function jobsOfType(typeId) {
+  return DB.tasks.filter(function (t) {
+    return taskJobType(t) === typeId && taskLive(t);
+  }).sort(function (a, b) {
+    /* Anything waiting on somebody first, then by the day it is due. */
+    var ap = a.status === 'completed' && !a.approved, bp = b.status === 'completed' && !b.approved;
+    if (ap !== bp) return ap ? -1 : 1;
+    return (a.due || '') < (b.due || '') ? -1 : 1;
+  });
+}
+function jobsSection(t) {
+  var all = jobsOfType(t.id);
+  /* Named, because the services table sits on the same page. */
+  var active = all.filter(function (x) { return !jobFinished(x); });
+  var done = all.filter(jobFinished);
+  var list = MGMT_JOBS === 'done' ? done : active;
+
+  var html = '<div id="mg_jobs"><div class="sec-t">Jobs · ' + list.length + '</div>';
+  html += '<div class="chips">' +
+    [['active', 'Active ' + active.length], ['done', 'Completed ' + done.length]].map(function (c) {
+      return '<button class="chip' + (MGMT_JOBS === c[0] ? ' on' : '') + '" data-a="mgJobs" data-x="' + c[0] + '">' + c[1] + '</button>';
+    }).join('') + '</div>';
+
+  html += mgTable(['Job', 'Kitchen', 'Assigned to', 'Due', 'Status'],
+    list.slice(0, 60).map(function (x) {
+      return '<tr>' +
+        '<td><button class="linkish b" data-a="task" data-x="' + h(x.id) + '">' + h(cleanName(x)) + '</button>' +
+          (x.zone ? '<div class="xs muted">' + h(x.zone) + '</div>' : '') + '</td>' +
+        '<td class="sm">' + h(lname(x.loc)) + '</td>' +
+        '<td class="sm">' + h(shortAssignees(x)) + '</td>' +
+        '<td class="sm">' + h(fmtD(x.due)) + '</td>' +
+        '<td>' + statusPill(x) +
+          (jobFinished(x) && x.approvedAt ? '<div class="xs muted">' + h(uname(x.approvedBy)) + ' · ' + h(fmtD(ymd(new Date(x.approvedAt)))) + '</div>' : '') +
+          (x.status === 'rejected' && x.reject ? '<div class="xs" style="color:var(--red)">' + h(x.reject) + '</div>' : '') +
+        '</td></tr>';
+    }), MGMT_JOBS === 'done' ? 'Nothing has been approved yet' : 'No live work under this job type');
+
+  if (list.length > 60) {
+    html += '<div class="card sm muted center">Showing the first 60 of ' + list.length + '</div>';
+  }
+  return html + '</div>';
 }
 
 /* A set of outlets will not fit the double-click-to-edit control, so this one
@@ -15530,6 +15591,7 @@ document.addEventListener('click', function (ev) {
     }
     case 'mgmtJobsBack': S.manage = 'jobs'; MGMT_Q = ''; MGMT_FILTER = 'all'; render(); break;
     case 'mgFilter': MGMT_FILTER = x; render(); break;
+    case 'mgJobs': MGMT_JOBS = x; render(); break;
     case 'openType': if (!perm().superadmin) break; S.manage = 'type'; S.manageType = x; MGMT_Q = ''; MGMT_WHO = ''; MGMT_FILTER = 'all'; render(); break;
     case 'addJobType': if (!perm().superadmin) break; JOBT_ERR = ''; closeSheet(); jobTypeForm(null); break;
     case 'editJobType': if (!perm().superadmin) break; JOBT_ERR = ''; closeSheet(); jobTypeForm(x); break;
