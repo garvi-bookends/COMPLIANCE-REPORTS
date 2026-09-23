@@ -10439,345 +10439,8 @@ window.onerror = function (msg, src, line) {
 
 /* QR */
 /* ---------- Offline QR encoder (byte mode, versions 1-10, ECC level M) ---------- */
-var QR = (function () {
-  // total codewords per version (1..10)
-  var TOTAL_CW = [0, 26, 44, 70, 100, 134, 172, 196, 242, 292, 346];
-  // [ecPerBlock, blocks1, data1, blocks2, data2] for ECC level M
-  var RS_M = [
-    null,
-    [10, 1, 16, 0, 0],
-    [16, 1, 28, 0, 0],
-    [26, 1, 44, 0, 0],
-    [18, 2, 32, 0, 0],
-    [24, 2, 43, 0, 0],
-    [16, 4, 27, 0, 0],
-    [18, 4, 31, 0, 0],
-    [22, 2, 38, 2, 39],
-    [22, 3, 36, 2, 37],
-    [26, 4, 43, 1, 44]
-  ];
-  var ALIGN = [
-    [], [], [6, 18], [6, 22], [6, 26], [6, 30], [6, 34],
-    [6, 22, 38], [6, 24, 42], [6, 26, 46], [6, 28, 50]
-  ];
-
-  // Galois field tables
-  var EXP = new Array(512), LOG = new Array(256);
-  (function () {
-    var x = 1;
-    for (var i = 0; i < 255; i++) {
-      EXP[i] = x; LOG[x] = i;
-      x <<= 1;
-      if (x & 0x100) x ^= 0x11d;
-    }
-    for (var j = 255; j < 512; j++) EXP[j] = EXP[j - 255];
-  })();
-  function gmul(a, b) { if (a === 0 || b === 0) return 0; return EXP[LOG[a] + LOG[b]]; }
-
-  function rsGenPoly(n) {
-    var poly = [1];
-    for (var i = 0; i < n; i++) {
-      var next = new Array(poly.length + 1).fill(0);
-      for (var j = 0; j < poly.length; j++) {
-        next[j] ^= poly[j];
-        next[j + 1] ^= gmul(poly[j], EXP[i]);
-      }
-      poly = next;
-    }
-    return poly;
-  }
-
-  function rsEncode(data, ecLen) {
-    var gen = rsGenPoly(ecLen);
-    var res = new Array(ecLen).fill(0);
-    for (var i = 0; i < data.length; i++) {
-      var factor = data[i] ^ res[0];
-      res.shift(); res.push(0);
-      if (factor !== 0) {
-        for (var j = 0; j < ecLen; j++) res[j] ^= gmul(gen[j + 1], factor);
-      }
-    }
-    return res;
-  }
-
-  function bchFormat(fmt) {
-    var d = fmt << 10;
-    for (var i = 4; i >= 0; i--) if (d & (1 << (i + 10))) d ^= 0x537 << i;
-    return ((fmt << 10) | d) ^ 0x5412;
-  }
-  function bchVersion(ver) {
-    var d = ver << 12;
-    for (var i = 5; i >= 0; i--) if (d & (1 << (i + 12))) d ^= 0x1f25 << i;
-    return (ver << 12) | d;
-  }
-
-  function utf8Bytes(str) {
-    var out = [], i, c;
-    for (i = 0; i < str.length; i++) {
-      c = str.charCodeAt(i);
-      if (c < 0x80) out.push(c);
-      else if (c < 0x800) { out.push(0xc0 | (c >> 6), 0x80 | (c & 63)); }
-      else if (c < 0xd800 || c >= 0xe000) { out.push(0xe0 | (c >> 12), 0x80 | ((c >> 6) & 63), 0x80 | (c & 63)); }
-      else {
-        i++;
-        var cp = 0x10000 + (((c & 0x3ff) << 10) | (str.charCodeAt(i) & 0x3ff));
-        out.push(0xf0 | (cp >> 18), 0x80 | ((cp >> 12) & 63), 0x80 | ((cp >> 6) & 63), 0x80 | (cp & 63));
-      }
-    }
-    return out;
-  }
-
-  function pickVersion(byteLen) {
-    for (var v = 1; v <= 10; v++) {
-      var r = RS_M[v];
-      var dataCw = r[1] * r[2] + r[3] * r[4];
-      var ccBits = v < 10 ? 8 : 16;
-      var need = 4 + ccBits + byteLen * 8;
-      if (need <= dataCw * 8) return v;
-    }
-    return -1;
-  }
-
-  function buildCodewords(bytes, ver) {
-    var r = RS_M[ver];
-    var dataCw = r[1] * r[2] + r[3] * r[4];
-    var ccBits = ver < 10 ? 8 : 16;
-    var bits = [];
-    function put(val, len) { for (var i = len - 1; i >= 0; i--) bits.push((val >> i) & 1); }
-    put(4, 4);
-    put(bytes.length, ccBits);
-    for (var i = 0; i < bytes.length; i++) put(bytes[i], 8);
-    var cap = dataCw * 8;
-    var term = Math.min(4, cap - bits.length);
-    put(0, term);
-    while (bits.length % 8 !== 0) bits.push(0);
-    var cws = [];
-    for (var b = 0; b < bits.length; b += 8) {
-      var v = 0; for (var k = 0; k < 8; k++) v = (v << 1) | bits[b + k];
-      cws.push(v);
-    }
-    var pad = [0xec, 0x11], pi = 0;
-    while (cws.length < dataCw) { cws.push(pad[pi % 2]); pi++; }
-
-    // split into blocks
-    var blocks = [], ecBlocks = [], pos = 0, n;
-    for (n = 0; n < r[1]; n++) { blocks.push(cws.slice(pos, pos + r[2])); pos += r[2]; }
-    for (n = 0; n < r[3]; n++) { blocks.push(cws.slice(pos, pos + r[4])); pos += r[4]; }
-    for (n = 0; n < blocks.length; n++) ecBlocks.push(rsEncode(blocks[n], r[0]));
-
-    var out = [], maxD = Math.max(r[2], r[4] || 0), c;
-    for (c = 0; c < maxD; c++) for (n = 0; n < blocks.length; n++) if (c < blocks[n].length) out.push(blocks[n][c]);
-    for (c = 0; c < r[0]; c++) for (n = 0; n < ecBlocks.length; n++) out.push(ecBlocks[n][c]);
-    return out;
-  }
-
-  function makeMatrix(ver) {
-    var size = ver * 4 + 17;
-    var m = [], res = [], i, j;
-    for (i = 0; i < size; i++) { m.push(new Array(size).fill(null)); res.push(new Array(size).fill(false)); }
-
-    function finder(r0, c0) {
-      for (var dr = -1; dr <= 7; dr++) for (var dc = -1; dc <= 7; dc++) {
-        var r = r0 + dr, c = c0 + dc;
-        if (r < 0 || c < 0 || r >= size || c >= size) continue;
-        var inRing = (dr >= 0 && dr <= 6 && dc >= 0 && dc <= 6);
-        var dark = false;
-        if (inRing) {
-          dark = (dr === 0 || dr === 6 || dc === 0 || dc === 6) ||
-                 (dr >= 2 && dr <= 4 && dc >= 2 && dc <= 4);
-        }
-        m[r][c] = dark; res[r][c] = true;
-      }
-    }
-    finder(0, 0); finder(0, size - 7); finder(size - 7, 0);
-
-    // timing
-    for (i = 8; i < size - 8; i++) {
-      m[6][i] = (i % 2 === 0); res[6][i] = true;
-      m[i][6] = (i % 2 === 0); res[i][6] = true;
-    }
-    // alignment
-    var ap = ALIGN[ver];
-    for (i = 0; i < ap.length; i++) for (j = 0; j < ap.length; j++) {
-      var ar = ap[i], ac = ap[j];
-      if ((ar <= 8 && ac <= 8) || (ar <= 8 && ac >= size - 9) || (ar >= size - 9 && ac <= 8)) continue;
-      for (var dr2 = -2; dr2 <= 2; dr2++) for (var dc2 = -2; dc2 <= 2; dc2++) {
-        var dk = Math.max(Math.abs(dr2), Math.abs(dc2)) !== 1;
-        m[ar + dr2][ac + dc2] = dk; res[ar + dr2][ac + dc2] = true;
-      }
-    }
-    // format info area reserved
-    for (i = 0; i < 9; i++) {
-      if (!res[8][i]) { res[8][i] = true; m[8][i] = false; }
-      if (!res[i][8]) { res[i][8] = true; m[i][8] = false; }
-    }
-    for (i = 0; i < 8; i++) {
-      res[8][size - 1 - i] = true; m[8][size - 1 - i] = false;
-      res[size - 1 - i][8] = true; m[size - 1 - i][8] = false;
-    }
-    // dark module
-    m[size - 8][8] = true; res[size - 8][8] = true;
-
-    // version info
-    if (ver >= 7) {
-      var vi = bchVersion(ver);
-      for (i = 0; i < 18; i++) {
-        var bit = ((vi >> i) & 1) === 1;
-        var r1 = Math.floor(i / 3), c1 = size - 11 + (i % 3);
-        m[r1][c1] = bit; res[r1][c1] = true;
-        m[c1][r1] = bit; res[c1][r1] = true;
-      }
-    }
-    return { m: m, res: res, size: size };
-  }
-
-  function placeData(mm, cws) {
-    var m = mm.m, res = mm.res, size = mm.size;
-    var bitIdx = 0, total = cws.length * 8;
-    function nextBit() {
-      if (bitIdx >= total) return false;
-      var b = (cws[bitIdx >> 3] >> (7 - (bitIdx & 7))) & 1;
-      bitIdx++;
-      return b === 1;
-    }
-    var up = true;
-    for (var col = size - 1; col > 0; col -= 2) {
-      if (col === 6) col--;
-      for (var i = 0; i < size; i++) {
-        var row = up ? size - 1 - i : i;
-        for (var c = 0; c < 2; c++) {
-          var cc = col - c;
-          if (!res[row][cc]) m[row][cc] = nextBit();
-        }
-      }
-      up = !up;
-    }
-  }
-
-  function applyMask(m, res, size, mask) {
-    var out = [];
-    for (var r = 0; r < size; r++) {
-      out.push([]);
-      for (var c = 0; c < size; c++) {
-        var v = m[r][c];
-        if (!res[r][c]) {
-          var f;
-          switch (mask) {
-            case 0: f = (r + c) % 2 === 0; break;
-            case 1: f = r % 2 === 0; break;
-            case 2: f = c % 3 === 0; break;
-            case 3: f = (r + c) % 3 === 0; break;
-            case 4: f = (Math.floor(r / 2) + Math.floor(c / 3)) % 2 === 0; break;
-            case 5: f = ((r * c) % 2) + ((r * c) % 3) === 0; break;
-            case 6: f = (((r * c) % 2) + ((r * c) % 3)) % 2 === 0; break;
-            default: f = (((r + c) % 2) + ((r * c) % 3)) % 2 === 0; break;
-          }
-          if (f) v = !v;
-        }
-        out[r].push(v);
-      }
-    }
-    return out;
-  }
-
-  function drawFormat(g, size, mask) {
-    var fmt = bchFormat((0 << 3) | mask); // 00 = ECC level M
-    for (var i = 0; i < 15; i++) {
-      var bit = ((fmt >> i) & 1) === 1;
-      // vertical strip (top-left col 8) and horizontal
-      if (i < 6) g[i][8] = bit;
-      else if (i < 8) g[i + 1][8] = bit;
-      else if (i === 8) g[8][7] = bit;
-      else g[8][14 - i] = bit;
-
-      if (i < 8) g[8][size - 1 - i] = bit;
-      else g[size - 15 + i][8] = bit;
-    }
-    g[size - 8][8] = true;
-  }
-
-  function penalty(g, size) {
-    var p = 0, r, c, i, run, prev;
-    // rule 1
-    for (r = 0; r < size; r++) {
-      run = 1; prev = g[r][0];
-      for (c = 1; c < size; c++) {
-        if (g[r][c] === prev) run++;
-        else { if (run >= 5) p += 3 + (run - 5); run = 1; prev = g[r][c]; }
-      }
-      if (run >= 5) p += 3 + (run - 5);
-    }
-    for (c = 0; c < size; c++) {
-      run = 1; prev = g[0][c];
-      for (r = 1; r < size; r++) {
-        if (g[r][c] === prev) run++;
-        else { if (run >= 5) p += 3 + (run - 5); run = 1; prev = g[r][c]; }
-      }
-      if (run >= 5) p += 3 + (run - 5);
-    }
-    // rule 2
-    for (r = 0; r < size - 1; r++) for (c = 0; c < size - 1; c++) {
-      var v = g[r][c];
-      if (g[r][c + 1] === v && g[r + 1][c] === v && g[r + 1][c + 1] === v) p += 3;
-    }
-    // rule 3
-    var pat1 = [true, false, true, true, true, false, true, false, false, false, false];
-    var pat2 = [false, false, false, false, true, false, true, true, true, false, true];
-    function match(arr, pat) {
-      for (var k = 0; k < 11; k++) if (arr[k] !== pat[k]) return false;
-      return true;
-    }
-    for (r = 0; r < size; r++) for (c = 0; c <= size - 11; c++) {
-      var hz = []; for (i = 0; i < 11; i++) hz.push(g[r][c + i]);
-      if (match(hz, pat1) || match(hz, pat2)) p += 40;
-    }
-    for (c = 0; c < size; c++) for (r = 0; r <= size - 11; r++) {
-      var vt = []; for (i = 0; i < 11; i++) vt.push(g[r + i][c]);
-      if (match(vt, pat1) || match(vt, pat2)) p += 40;
-    }
-    // rule 4
-    var dark = 0;
-    for (r = 0; r < size; r++) for (c = 0; c < size; c++) if (g[r][c]) dark++;
-    var pct = (dark * 100) / (size * size);
-    p += Math.floor(Math.abs(pct - 50) / 5) * 10;
-    return p;
-  }
-
-  // returns 2D boolean matrix
-  function encode(text) {
-    var bytes = utf8Bytes(text);
-    var ver = pickVersion(bytes.length);
-    if (ver < 0) throw new Error('QR: data too long');
-    var cws = buildCodewords(bytes, ver);
-    var mm = makeMatrix(ver);
-    placeData(mm, cws);
-    var best = null, bestScore = Infinity;
-    for (var mask = 0; mask < 8; mask++) {
-      var g = applyMask(mm.m, mm.res, mm.size, mask);
-      drawFormat(g, mm.size, mask);
-      var s = penalty(g, mm.size);
-      if (s < bestScore) { bestScore = s; best = g; }
-    }
-    return best;
-  }
-
-  function svg(text, px, quiet) {
-    var g = encode(text);
-    var n = g.length;
-    quiet = quiet === undefined ? 2 : quiet;
-    var total = n + quiet * 2;
-    var d = '';
-    for (var r = 0; r < n; r++) for (var c = 0; c < n; c++) {
-      if (g[r][c]) d += 'M' + (c + quiet) + ' ' + (r + quiet) + 'h1v1h-1z';
-    }
-    return '<svg xmlns="http://www.w3.org/2000/svg" width="' + px + '" height="' + px +
-      '" viewBox="0 0 ' + total + ' ' + total + '" shape-rendering="crispEdges">' +
-      '<rect width="' + total + '" height="' + total + '" fill="#fff"/>' +
-      '<path d="' + d + '" fill="#000"/></svg>';
-  }
-
-  return { encode: encode, svg: svg };
-})();
+/* The QR encoder that drew the code on a printed label was removed with the
+   printing itself — nothing generates a QR any more. */
 
 
 /* =====================================================================
@@ -13805,19 +13468,12 @@ function productForm(id) {
     '<div id="f_labelstat">' + labelDetailHTML(f.opened, f.expiry) + '</div>' +
     '<div class="row" style="margin-top:10px;align-items:center">' +
     '<div class="grow sm b">' + (p ? (p.labelled ? '✓ Label applied ' + h(fmtD(ymd(new Date(p.labelledAt)))) : '✕ Label not written yet')
-      : 'The label &amp; QR are made when you save') + '</div>' +
+      : 'Saving records it') + '</div>' +
     (p ? pill(p.labelled ? 'LABEL OK' : 'LABEL MISSING', p.labelled ? 'p-grn' : 'p-red') : '') + '</div>' +
-    /* The code and its QR, scannable straight off the screen. No button out to
-       the label sheet — that would replace this one and lose what was typed. */
-    (p ? '<div class="row" style="margin-top:12px;align-items:center">' +
-      '<div>' + QR.svg(labelPayload(p), 88, 1) + '</div>' +
-      '<div class="grow"><div class="xs muted">Label code</div><div class="b">' + h(labelCode(p)) + '</div>' +
-      '<div class="xs muted" style="margin-top:4px">Point a phone camera at this to open the product.</div></div></div>' : '') +
     '</div>' +
     '<div class="btnrow">' +
     '<button class="btn sec" data-a="closeSheet">Cancel</button>' +
-    '<button class="btn" data-a="saveProduct">' + (id ? 'Save changes' : 'Save label') + '</button></div>' +
-    (id ? '' : '<div class="sm muted center" style="margin-top:10px">A label &amp; QR is generated right after saving.</div>');
+    '<button class="btn" data-a="saveProduct">' + (id ? 'Save changes' : 'Save label') + '</button></div>';
   /* One record, two doors into it: the title says which one you came through. */
   var noun = S.tab === 'exp' ? 'expiry date' : 'label';
   openSheet(id ? 'Edit ' + noun : 'Add ' + noun + ' · ' + lname(loc), body);
@@ -13869,40 +13525,16 @@ function appLink() {
   if (location.protocol.indexOf('http') !== 0) return '';
   return location.origin + location.pathname.replace(/[^\/]*$/, '') ;
 }
-/* The QR holds a normal web link, so ANY phone camera — iPhone or Android —
-   opens the product straight in the app. No special scanner app needed. */
-function labelPayload(p) {
-  var base = appLink();
-  return base ? base + '#p=' + p.id : 'BOOKENDS|' + p.id + '|' + p.name + '|EXP:' + p.expiry;
-}
-/* The card staff copied onto a blank sticker by hand was taken off the label
-   sheet — the printed label does that job, and the details are a table now. */
-function labelHTML(p) {
-  /* The colour is a stripe down the edge rather than a fill: it has to stay
-     readable printed on white paper in black and white. */
-  return '<div class="lbl"' + (p.color ? ' style="border-left:7px solid ' + labelColor(p.color) + '"' : '') + '>' +
-    '<div class="qr">' + QR.svg(labelPayload(p), 104, 1) + '<div style="font-size:8px;text-align:center;font-weight:700;margin-top:2px">' + h(labelCode(p)) + '</div></div>' +
-    '<div class="f"><div class="nm">' + h(p.name) + '</div>' +
-    (p.type ? '<div class="kv"><b>Type:</b> ' + h(p.type) + '</div>' : '') +
-    '<div class="kv"><b>MFG:</b> ' + fmtD(p.opened) + '</div>' +
-    (p.batch ? '<div class="kv"><b>Batch:</b> ' + h(p.batch) + ' · ' + p.qty + ' ' + h(p.unit) + '</div>' : '') +
-    (p.storage ? '<div class="kv"><b>Storage:</b> ' + h(p.storage) + '</div>' : '') +
-    '<div class="kv"><b>Staff:</b> ' + h(p.initials || '—') + ' · ' + h((locById(p.loc) || {}).code || '') + '</div>' +
-    '<div class="exp">USE BY: ' + fmtD(p.expiry).toUpperCase() + '</div>' +
-    '<div class="brand">BOOKENDS · ' + h(lname(p.loc)).toUpperCase() + '</div></div></div>';
-}
-/* The details of one label, as a table. This used to be a big card laid out
-   like the sticker itself, for copying onto a blank one by hand; the printed
-   label below does that job, so the room is better spent saying plainly what
-   the record holds. A line it has nothing for is left out rather than shown
-   empty. */
+/* There is no printed label and no QR any more: the record is read on the
+   screen, and the sticker on the container is written by hand. */
+/* The details of one label, as a table. A line the record has nothing for
+   is left out rather than shown empty. */
 function labelTable(p) {
   var st = expiryStatus(p.expiry);
   var n = Math.abs(st.days), unit = ' day' + (n === 1 ? '' : 's');
   var left = st.days < 0 ? n + unit + ' ago' : st.days === 0 ? 'today' : n + unit + ' left';
   var rows = [
     ['Name', '<b>' + h(p.name) + '</b>'],
-    ['Label code', h(labelCode(p))],
     ['MFG date', h(fmtD(p.opened))],
     ['Expiry date', h(fmtD(p.expiry)) + ' <span class="muted">· ' + h(left) + '</span>'],
     ['Status', pill(st.label, st.cls)],
@@ -13927,24 +13559,8 @@ function labelSheet(id) {
       '" alt="" style="display:block;width:100%;height:190px;object-fit:cover"></div>' : '') +
     labelTable(p) +
     (perm().readonly ? '' : '<button class="btn ' + (p.labelled ? 'sec' : 'ok') + '" style="margin-top:12px" data-a="markLabelled" data-x="' + p.id + '">' +
-      (p.labelled ? '✓ Label already applied — confirm again' : '✓ I have written it and stuck it on') + '</button>') +
-    '<div class="sec-t">If you have a printer</div>' +
-    '<div class="card">' + labelHTML(p) +
-    '<div class="btnrow" style="margin-top:12px"><button class="btn sec" data-a="printLabel" data-x="' + p.id + '">🖨 Print this label</button></div>' +
-    '<div class="xs muted center" style="margin-top:8px">The QR opens this product on any phone camera — iPhone or Android.</div></div>';
+      (p.labelled ? '✓ Label already applied — confirm again' : '✓ I have written it and stuck it on') + '</button>');
   openSheet(p.name, body);
-}
-/* Printing renders into the page itself — pop-up windows are blocked on iPhone */
-function printLabels(ids) {
-  var items = ids.map(function (id) {
-    var p = DB.products.filter(function (x) { return x.id === id; })[0];
-    return p ? '<div style="break-inside:avoid;page-break-inside:avoid">' + labelHTML(p) + '</div>' : '';
-  }).join('');
-  document.getElementById('printarea').innerHTML = '<div class="lbl-sheet">' + items + '</div>';
-  setTimeout(function () {
-    window.print();
-    setTimeout(function () { document.getElementById('printarea').innerHTML = ''; }, 800);
-  }, 120);
 }
 function printNode(html) {
   document.getElementById('printarea').innerHTML = html;
@@ -16109,12 +15725,6 @@ document.addEventListener('click', function (ev) {
       pp.labelled = true; pp.labelledAt = Date.now(); save('products', pp); logAct('label', 'Label applied: ' + pp.name, pp.loc);
       closeSheet(); render(); toast('Label recorded ✓'); break;
     }
-    case 'printLabel': printLabels([x]); break;
-    case 'printAll': {
-      var miss = productsFor(S.loc).filter(function (p) { return !p.labelled; }).map(function (p) { return p.id; });
-      if (!miss.length) { toast('No missing labels'); break; }
-      printLabels(miss); break;
-    }
     case 'printReport': {
       var rep = document.querySelector('#app .wrap');
       printNode('<div style="padding:10mm 0"><h2 style="margin:0 0 4px">Bookends Kitchen Compliance</h2>' +
@@ -16208,7 +15818,7 @@ function saveProduct() {
   };
   DB.products.push(np); save('products', np); logAct('product', 'Added: ' + np.name, loc);
   uploadProductPhoto(np);
-  closeSheet(); render(); labelSheet(np.id); toast('Added — print the label now');
+  closeSheet(); render(); labelSheet(np.id); toast('Added');
 }
 
 document.addEventListener('keydown', function (ev) {
