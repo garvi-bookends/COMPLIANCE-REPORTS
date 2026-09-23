@@ -14971,12 +14971,12 @@ function renderJobManagement() {
     '<div class="card sm muted" style="margin-top:10px">Open a job type below to add jobs to it.</div>';
 
   html += mgSearchBox(MGMT_Q, 'Job type name or description');
-  html += mgChips([['all', 'All ' + types.length], ['active', 'Active ' + activeT.length]], MGMT_FILTER);
 
-  var shown = types.filter(function (t) {
-    if (MGMT_FILTER === 'active' && !t.active) return false;
-    return mgMatches([t.name, t.description || '']);
-  });
+  /* No All/Active chips here. Every job type in the list is active in
+     practice, so the two chips always showed the same rows and the same
+     number — a control that never did anything. The Active tile above still
+     says how many there are, and the Status column says which is which. */
+  var shown = types.filter(function (t) { return mgMatches([t.name, t.description || '']); });
 
   html += '<div class="sec-t">Job types · ' + shown.length + (shown.length !== types.length ? ' of ' + types.length : '') + '</div>';
   html += mgTable(['Name', 'Description', 'Under it', 'Status', 'Actions'],
