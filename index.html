@@ -13359,7 +13359,7 @@ function renderExpiry() {
           (p.photo ? '<img src="' + photoSrc(p.photo) + '" alt="" style="width:40px;height:40px;border-radius:9px;object-fit:cover;flex:0 0 auto">' : '') +
           '<div><button class="linkish b" data-a="product" data-x="' + h(p.id) + '">' + h(p.name) + '</button>' +
           (isActive(p) ? '' : ' ' + pill('INACTIVE', 'p-gry')) +
-          '<div class="xs muted">' + h(labelCode(p)) + '</div></div></div></td>' +
+          '</div></div></td>' +
         '<td class="sm">' + h(p.opened ? fmtD(p.opened) : '—') + '</td>' +
         '<td class="sm">' + h(fmtD(p.expiry)) +
           '<div class="xs muted">' + (st.days < 0 ? n + unit + ' ago' : st.days === 0 ? 'today' : n + unit + ' left') + '</div></td>' +
@@ -13507,7 +13507,7 @@ function renderLabels() {
     return '<button class="lrow" data-a="label" data-x="' + p.id + '">' +
       '<span class="thumb" style="display:grid;place-items:center;font-size:19px;background:' + (p.labelled ? '#e6f5ee' : '#fdecea') + '">' + (p.labelled ? '🏷' : '⚠️') + '</span>' +
       '<span class="grow"><span class="t trunc">' + h(p.name) + '</span>' +
-      '<div class="xs muted" style="margin:2px 0 5px">' + h(labelCode(p)) + ' · ' + h(p.type || p.batch) + ' · use by ' + fmtD(p.expiry) + '</div>' +
+      '<div class="xs muted" style="margin:2px 0 5px">use by ' + fmtD(p.expiry) + '</div>' +
       pill(p.labelled ? 'LABEL OK' : 'LABEL MISSING', p.labelled ? 'p-grn' : 'p-red') + ' ' + pill(st.emoji + ' ' + st.label, st.cls) +
       (isActive(p) ? '' : ' ' + pill('INACTIVE', 'p-gry')) +
       '</span><span class="chev">›</span></button>';
@@ -14957,7 +14957,7 @@ function renderTypeProducts(t, kind) {
       var left = st.days < 0 ? n + unit + ' ago' : st.days === 0 ? 'today' : n + unit + ' left';
       return '<tr>' +
         '<td><button class="linkish b" data-a="product" data-x="' + h(p.id) + '">' + h(p.name) + '</button>' +
-          '<div class="xs muted">' + h(labelCode(p)) + (p.cat ? ' · ' + h(p.cat) : '') + '</div></td>' +
+          (p.cat ? '<div class="xs muted">' + h(p.cat) + '</div>' : '') + '</td>' +
         '<td class="sm">' + h(lname(p.loc)) + '</td>' +
         '<td class="sm">' + h(uname(p.by)) + '</td>' +
         '<td class="sm">' + h(p.opened ? fmtD(p.opened) : '—') +
