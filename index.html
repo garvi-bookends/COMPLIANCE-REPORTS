@@ -15113,6 +15113,11 @@ function renderTypeServices() {
     html += '<div class="card sm" style="background:#fdecea;border-color:#f6c9c4;margin-top:12px"><b>This job type is switched off.</b> ' +
       'Its services are not scheduled.</div>';
   }
+  /* The work first, the setup under it. What was done and what is still
+     owed is what this page is opened for day to day; the list of services
+     that generate it is changed far less often. */
+  html += jobsSection(t);
+
   html += '<button class="btn ok" data-a="addJob" data-x="' + h(t.id) + '" style="margin-top:12px">＋ Add Service</button>';
   html += mgSearchBox(MGMT_Q, 'Service name or area');
 
@@ -15156,8 +15161,6 @@ function renderTypeServices() {
         '<td class="nowrap">' + mgBtn('deleteClean', j.tk, '✕', 'Delete service', 'background:#f6e7e5;color:var(--red)') + '</td>' +
         '</tr>';
     }), 'No services under this job type yet') + '</div>';
-
-  html += jobsSection(t);
 
   html += '<div class="card sm muted" style="margin-top:12px">Double-click any detail — name, area, frequency, schedule, who it is assigned to, or status — to edit it in place. Restaurants opens a picker. ' +
     'Enter saves, Escape cancels.</div>';
