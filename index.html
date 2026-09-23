@@ -14952,7 +14952,7 @@ function typeCount(id) {
      scheduled. It said "0 services" for a checklist of 46 that happened to be
      switched off, which read as "there is nothing here" when opening it showed
      46 rows. */
-  var n = allServicesOfType(id).length;
+  var n = allServicesOfType(id).filter(function (j) { return !j.stopped; }).length;
   return { n: n, what: n === 1 ? 'service' : 'services' };
 }
 function renderJobManagement() {
@@ -15088,7 +15088,10 @@ function renderTypeServices() {
   var t = jobTypeById(S.manageType);
   if (!t) { S.manage = 'jobs'; render(); return; }
   if (t.id === 'labelling') { renderTypeProducts(t, t.id); return; }
-  var list = allServicesOfType(t.id);
+  /* A deleted service keeps its slot for ever — task ids are built from it —
+     but it is no longer part of the setup, so it is not listed. The work
+     recorded against it stays in Task Review either way. */
+  var list = allServicesOfType(t.id).filter(function (j) { return !j.stopped; });
   var needsLocs = list.filter(isAllOutlets);
 
   var html = mgHead(t.name.toUpperCase(), 'Job Management · ' + list.length + ' service' + (list.length === 1 ? '' : 's'),
