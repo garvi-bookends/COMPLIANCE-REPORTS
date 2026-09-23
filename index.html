@@ -13496,9 +13496,6 @@ function renderLabels() {
     '<div class="card"><div class="row"><div>' + ring(e.labelPct, 76, 9) + '</div><div class="grow">' +
     '<div class="b">Labelling compliance</div><div class="sm muted">' + e.labelled + ' of ' + ps.length + ' containers have a label written and applied</div>' +
     '<div class="xs muted" style="margin-top:4px">' + (ps.length - e.labelled) + ' container(s) missing a label</div></div></div></div>';
-  html += '<div class="btnrow" style="margin-bottom:12px">' +
-    (perm().readonly ? '' : '<button class="btn" data-a="lfilter" data-x="missing">✍️ Labels to write (' + (ps.length - e.labelled) + ')</button>') +
-    '<button class="btn sec" data-a="scan">⛶ Scan a label</button></div>';
   html += '<div class="chips">' + [['all', 'All ' + ps.length], ['missing', 'Missing ' + (ps.length - e.labelled)], ['done', 'Labelled ' + e.labelled]].map(function (c) {
     return '<button class="chip' + (f === c[0] ? ' on' : '') + '" data-a="lfilter" data-x="' + c[0] + '">' + c[1] + '</button>';
   }).join('') + '</div>';
