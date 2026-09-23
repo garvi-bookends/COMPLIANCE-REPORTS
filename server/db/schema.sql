@@ -278,6 +278,16 @@ values ('labelling',   'Labelling',   'Writing and applying product labels', tru
        ('expiry-date', 'Expiry Date', 'Checking use-by dates and withdrawing expired stock', true, 30)
 on conflict (id) do nothing;
 
+-- The people a service is given to, as an array of app_users ids:
+--   ["U-A1B2C3","U-D4E5F6"]
+-- null or [] means nobody in particular — whoever is on shift, which is what
+-- every service written before this column says. `assigned_to` below is kept
+-- and still holds the first of them, so a device still running the previous
+-- version reads a sensible answer instead of none.
+alter table bk_checklist add column if not exists assignees jsonb;
+update bk_checklist set assignees = to_jsonb(array[assigned_to])
+ where assigned_to is not null and assignees is null;
+
 -- Which job type a service belongs to. Everything already recorded is
 -- cleaning, which is why the default and the backfill are both 'cleaning'.
 alter table bk_checklist add column if not exists job_type text not null default 'cleaning';

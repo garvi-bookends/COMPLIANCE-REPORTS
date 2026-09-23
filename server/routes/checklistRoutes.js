@@ -77,6 +77,25 @@ function parseLocs(v) {
   if (!out.length) return { error: 'Choose at least one restaurant' };
   return { value: out };
 }
+/* The people a service is given to. An empty list is not an error: it means
+   nobody in particular, which is how every service starts. Ids are checked
+   for shape only — a user can be deleted after being assigned, and the app
+   shows that as an unknown name rather than losing the whole service. */
+var USER_ID = /^[A-Za-z0-9_-]{1,40}$/;
+function parseAssignees(v) {
+  if (v === null || v === undefined || v === '') return { value: [] };
+  if (typeof v === 'string') v = [v];
+  if (!Array.isArray(v)) return { error: 'Assigned users must be a list' };
+  if (v.length > 50) return { error: 'Too many people on one job' };
+  var out = [];
+  for (var i = 0; i < v.length; i++) {
+    var id = String(v[i] == null ? '' : v[i]).trim();
+    if (!id) continue;
+    if (!USER_ID.test(id)) return { error: 'That is not a user id: ' + v[i] };
+    if (out.indexOf(id) === -1) out.push(id);
+  }
+  return { value: out };
+}
 /* `loc` is no longer read by the app, but a job at exactly one outlet still
    writes it, so a device still running the previous version reads that job
    correctly. A job at several reads there as "every kitchen" — too many rather
@@ -101,6 +120,7 @@ function rowToItem(x) {
   return {
     tkey: x.tkey,
     assignedTo: x.assigned_to || null,
+    assignees: Array.isArray(x.assignees) ? x.assignees : (x.assigned_to ? [x.assigned_to] : []),
     atTime: x.at_time || null,
     endDate: x.end_date || null,
     jobType: x.job_type || 'cleaning',
@@ -213,7 +233,10 @@ router.post('/items', superadminOnly, asyncHandler(function (req, res) {
 
   /* Which job type this service belongs to. Cleaning when nothing is said, so
      every existing caller keeps working. */
-  var assignedTo = tidy(body.assignedTo) ? tidy(body.assignedTo).slice(0, 40) : null;
+  var pa = parseAssignees(body.assignees !== undefined ? body.assignees : body.assignedTo);
+  if (pa.error) return badRequest(res, pa.error);
+  var assignees = pa.value;
+  var assignedTo = assignees.length ? assignees[0] : null;
 
   /* A time of day, and a date the job stops being scheduled. Both optional. */
   var atTime = tidy(body.atTime);
@@ -242,9 +265,10 @@ router.post('/items', superadminOnly, asyncHandler(function (req, res) {
       }
       var tkey = freq + next;
       return client.query(
-        'insert into bk_checklist (tkey, name, zone, freq, day, loc, locs, job_type, assigned_to, at_time, end_date, custom, enabled, created_by, created_at, updated_at) ' +
-        'values ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10, $11, true, true, $12, now(), now())',
-        [tkey, name, zone, freq, day, loc, JSON.stringify(locs), jobType, assignedTo, atTime || null, endDate || null, req.auth.id]
+        'insert into bk_checklist (tkey, name, zone, freq, day, loc, locs, job_type, assigned_to, assignees, at_time, end_date, custom, enabled, created_by, created_at, updated_at) ' +
+        'values ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10::jsonb, $11, $12, true, true, $13, now(), now())',
+        [tkey, name, zone, freq, day, loc, JSON.stringify(locs), jobType, assignedTo,
+          assignees.length ? JSON.stringify(assignees) : null, atTime || null, endDate || null, req.auth.id]
       ).then(function () {
         return audit(client, 'add', tkey, null, name, req.auth);
       }).then(function () {
@@ -323,10 +347,15 @@ router.patch('/items/:tkey', superadminOnly, asyncHandler(function (req, res) {
     if (one && LOC_IDS.indexOf(one) === -1) err = 'Unknown restaurant';
     else { patch.loc = one; patch.locs = one ? [one] : null; }
   }
-  if (!err && has('assignedTo')) {
-    /* Empty means nobody in particular — whoever is on shift picks it up. */
-    patch.assigned_to = body.assignedTo === null || body.assignedTo === '' || body.assignedTo === undefined
-      ? null : String(body.assignedTo).slice(0, 40);
+  if (!err && (has('assignees') || has('assignedTo'))) {
+    /* Empty means nobody in particular — whoever is on shift picks it up.
+       Both columns are written from the one list so they cannot disagree. */
+    var pa2 = parseAssignees(has('assignees') ? body.assignees : body.assignedTo);
+    if (pa2.error) err = pa2.error;
+    else {
+      patch.assignees = pa2.value.length ? pa2.value : null;
+      patch.assigned_to = pa2.value.length ? pa2.value[0] : null;
+    }
   }
   if (!err && has('atTime')) {
     var atTime = tidy(body.atTime);
@@ -376,6 +405,7 @@ router.patch('/items/:tkey', superadminOnly, asyncHandler(function (req, res) {
         ['locs', JSON.stringify(pick('locs', null)), '::jsonb'],
         ['job_type', row ? row.job_type : 'cleaning'],
         ['assigned_to', pick('assigned_to', null)],
+        ['assignees', JSON.stringify(pick('assignees', null)), '::jsonb'],
         ['at_time', pick('at_time', null)],
         ['end_date', pick('end_date', null)],
         ['custom', row ? row.custom : false],

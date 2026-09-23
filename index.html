@@ -1129,6 +1129,33 @@ function normLocs(o) {
   }
   return o.loc ? [o.loc] : null;      /* written by an older version */
 }
+/* The people a service or a job is given to. A record written before several
+   people could be named carries one id in `assigned`/`assignedTo`, so that is
+   read as a list of one and nothing needs migrating on the device. An empty
+   list means nobody in particular — whoever is on shift. */
+function assigneesOf(o) {
+  if (!o) return [];
+  if (o.assignees && o.assignees.length) {
+    var out = [];
+    o.assignees.forEach(function (id) { if (id && out.indexOf(id) === -1) out.push(id); });
+    return out;
+  }
+  var one = o.assignedTo || o.assigned;
+  return one ? [one] : [];
+}
+function assignedToMe(o) { return !!ME && assigneesOf(o).indexOf(ME.id) > -1; }
+/* First names for a narrow row: "Rahul, Amit", or "Rahul +2" past two. */
+function shortAssignees(o) {
+  var ids = assigneesOf(o);
+  if (!ids.length) return 'Anyone on shift';
+  var first = ids.slice(0, 2).map(function (id) { return uname(id).split(' ')[0]; }).join(', ');
+  return ids.length > 2 ? first + ' +' + (ids.length - 2) : first;
+}
+function assigneeNames(o) {
+  var ids = assigneesOf(o);
+  if (!ids.length) return 'Anyone on shift';
+  return ids.map(function (id) { return uname(id); }).join(', ');
+}
 function isAllOutlets(j) { return !j || !j.locs || !j.locs.length; }
 function coversLoc(j, loc) { return isAllOutlets(j) || j.locs.indexOf(loc) > -1; }
 function locsLabel(locs) {
@@ -1148,7 +1175,7 @@ function jobFor(tk) {
   if (o && o.custom) {
     return { tk: tk, area: o.name, zone: o.zone, freq: o.freq, day: o.day == null ? null : o.day,
              loc: o.loc || null, locs: normLocs(o), jobType: o.jobType || 'cleaning',
-             assignedTo: o.assignedTo || null, atTime: o.atTime || null, endDate: o.endDate || null,
+             assignedTo: o.assignedTo || null, assignees: assigneesOf(o), atTime: o.atTime || null, endDate: o.endDate || null,
              custom: true, enabled: o.enabled === true, stopped: !!o.deleted };
   }
   if (!b) return null;
@@ -1165,6 +1192,7 @@ function jobFor(tk) {
            locs: normLocs(o),
            jobType: (o && o.jobType) || 'cleaning',
            assignedTo: (o && o.assignedTo) || null,
+           assignees: assigneesOf(o),
            atTime: (o && o.atTime) || null,
            endDate: (o && o.endDate) || null,
            custom: false, enabled: !!(o && o.enabled), stopped: !!(o && o.deleted) };
@@ -1359,7 +1387,10 @@ function ensureJobs() {
       if (tp.endDate && due > tp.endDate) return;
       var r = newTaskRec(L, tp, period, due, who);
       if (idSuffix) r.id += idSuffix;
-      if (tp.assignedTo) r.assigned = tp.assignedTo;
+      /* Everyone the service was given to. `assigned` keeps the first of them
+         so an older device, and everything that reads one name, still works. */
+      var people = assigneesOf(tp);
+      if (people.length) { r.assignees = people; r.assigned = people[0]; }
       if (tp.atTime) r.time = tp.atTime;
       if (tp.jobType && tp.jobType !== 'cleaning') r.jobType = tp.jobType;
       if (!have[r.id]) { have[r.id] = 1; DB.tasks.push(r); added++; if (typeof Cloud !== 'undefined') Cloud.queue('tasks', r); }
@@ -1471,7 +1502,33 @@ function locById(id) { for (var i = 0; i < LOCATIONS.length; i++) if (LOCATIONS[
 function lname(id) { var l = locById(id); return l ? l.name : '—'; }
 
 function perm() { return ROLES[ME ? ME.role : 'staff']; }
-function visibleLocations() { return perm().all ? LOCATIONS : LOCATIONS.filter(function (l) { return l.id === ME.loc; }); }
+/* Kitchens this account may open. A role that sees everything sees every
+   kitchen; anyone else sees their own — and any other kitchen where work has
+   been given to them by name, because work assigned to a person has to be
+   reachable by that person. A kitchen reached that way is a GUEST kitchen:
+   only their own jobs show there, never the rest of that kitchen's work. */
+var GUEST_LOCS = null, GUEST_FOR = null;
+function guestLocations() {
+  if (!ME || perm().all) return [];
+  /* Worked out once and kept per account: a cache that forgot whose it was
+     would hand the next person looked at somebody else's kitchens. */
+  if (GUEST_LOCS && GUEST_FOR === ME.id) return GUEST_LOCS;
+  var seen = {};
+  DB.tasks.forEach(function (t) {
+    if (t.loc === ME.loc || seen[t.loc]) return;
+    if (assignedToMe(t) && taskLive(t)) seen[t.loc] = 1;
+  });
+  GUEST_LOCS = Object.keys(seen); GUEST_FOR = ME.id;
+  return GUEST_LOCS;
+}
+function isGuestLoc(loc) {
+  return !!ME && !perm().all && loc !== ME.loc && guestLocations().indexOf(loc) > -1;
+}
+function visibleLocations() {
+  if (perm().all) return LOCATIONS;
+  var mine = guestLocations();
+  return LOCATIONS.filter(function (l) { return l.id === ME.loc || mine.indexOf(l.id) > -1; });
+}
 function logAct(type, text, loc) { DB.log.unshift({ t: Date.now(), type: type, text: text, loc: loc, by: ME ? ME.id : null }); DB.log = DB.log.slice(0, 300); }
 
 /* ---------------- compliance maths ---------------- */
@@ -1501,10 +1558,13 @@ function servicesForType(freq, loc, type) {
 function tasksFor(loc, wk, freq, type) {
   var mid = wk ? monthOfWeek(wk) : null;
   var want = type || CLEANING_TYPE;
+  var guest = isGuestLoc(loc);
   return DB.tasks.filter(function (t) {
     if (t.loc !== loc) return false;
     if (taskJobType(t) !== want) return false;
     if (!taskLive(t)) return false;
+    /* A kitchen reached through an assignment shows that work and no more. */
+    if (guest && !assignedToMe(t)) return false;
     if (freq && t.freq !== freq) return false;
     if (!wk) return true;
     return t.freq === 'M' ? t.period === mid : t.period === wk;
@@ -1534,10 +1594,12 @@ function cleaningStats(loc, wk, freq) {
    range instead of a fixed ISO week/month bucket. */
 function tasksInRange(loc, from, to, freq, type) {
   var want = type || CLEANING_TYPE;
+  var guest = isGuestLoc(loc);
   return DB.tasks.filter(function (t) {
     if (t.loc !== loc) return false;
     if (taskJobType(t) !== want) return false;
     if (!taskLive(t)) return false;
+    if (guest && !assignedToMe(t)) return false;
     if (freq && t.freq !== freq) return false;
     return t.due >= from && t.due <= to;
   });
@@ -2062,7 +2124,7 @@ function currentValue(job, field) {
   if (field === 'assignedTo') return job.assignedTo || '';
   return '';
 }
-var FIELD_LABEL = { name: 'Cleaning name', zone: 'Area', freq: 'Frequency', day: 'Schedule', loc: 'Restaurant', locs: 'Restaurants', status: 'Status', assignedTo: 'Assigned to' };
+var FIELD_LABEL = { name: 'Cleaning name', zone: 'Area', freq: 'Frequency', day: 'Schedule', loc: 'Restaurant', locs: 'Restaurants', status: 'Status', assignedTo: 'Assigned to', assignees: 'Assigned to' };
 
 /* Turns the detail into an input or a dropdown in place. Enter saves, Escape
    cancels, clicking away saves — the three things people try. A dropdown also
@@ -2129,6 +2191,11 @@ function saveCleanField(tk, field, value, current) {
     if (JSON.stringify(next) === JSON.stringify(current || [])) { render(); return; }
     body.locs = next;
     label = next.map(function (id) { return (locById(id) || {}).code || id; }).join(', ');
+  } else if (field === 'assignees') {
+    var people = (value || []).slice();
+    if (JSON.stringify(people) === JSON.stringify(current || [])) { render(); return; }
+    body.assignees = people;
+    label = people.length ? people.map(function (id) { return uname(id); }).join(', ') : 'anyone on shift';
   } else if (field === 'status') {
     if (value === current) { render(); return; }
     /* Switching a service on also un-deletes it, so one control does what it
@@ -2297,6 +2364,36 @@ function nobodyHasType(typeId) {
 function jobTypeChipsHTML(chosen) {
   if (!chosen || !chosen.length) return '<span class="xs muted">Every job type</span>';
   return chosen.map(function (id) { return '<span class="chip on">' + h(jobTypeName(id)) + '</span>'; }).join('');
+}
+/* The people a job is given to — the tick list shared by the Add Job form and
+   the Assigned To editor in Job Management. Nothing ticked means nobody in
+   particular, which is how a job with no owner has always behaved. */
+function peopleChecks(pre, people, chosen) {
+  var on = {}; (chosen || []).forEach(function (id) { on[id] = 1; });
+  if (!people.length) return '<div class="sm muted" id="' + pre + '_users">Nobody can be given this work yet.</div>';
+  return '<div class="lchks" id="' + pre + '_users">' + people.map(function (u) {
+    return '<label class="lchk' + (on[u.id] ? ' on' : '') + '"><input type="checkbox" value="' + h(u.id) + '"' +
+      (on[u.id] ? ' checked' : '') + '><span>' + h(u.name) +
+      '<span class="muted" style="font-weight:600"> · ' + h(u.loc ? (locById(u.loc) || {}).code || u.loc : 'all') + '</span></span></label>';
+  }).join('') + '</div>' +
+  '<div class="xs muted" style="margin-top:8px">Tick everyone who does this job. Leave them all unticked for whoever is on shift.</div>';
+}
+function readPeopleChecks(pre) {
+  var box = document.getElementById(pre + '_users');
+  if (!box) return [];
+  var out = [];
+  Array.prototype.slice.call(box.querySelectorAll('input:checked')).forEach(function (i) {
+    if (out.indexOf(i.value) === -1) out.push(i.value);     /* never the same person twice */
+  });
+  return out;
+}
+function wirePeopleChecks(pre) {
+  var box = document.getElementById(pre + '_users');
+  if (!box) return;
+  box.addEventListener('change', function (e) {
+    var lab = e.target.closest ? e.target.closest('.lchk') : null;
+    if (lab) lab.className = 'lchk' + (e.target.checked ? ' on' : '');
+  });
 }
 function readJobTypeChecks(pre) {
   var box = document.getElementById(pre + '_types');
@@ -2849,7 +2946,7 @@ function renderSimpleHome() {
   var wk = S.week, loc = S.loc;
   var all = tasksFor(loc, wk);
   var todo = all.filter(function (t) { return t.status === 'pending' || t.status === 'rejected'; });
-  todo.sort(function (a, b) { return (b.assigned === ME.id) - (a.assigned === ME.id) || parseD(a.due) - parseD(b.due); });
+  todo.sort(function (a, b) { return (assignedToMe(b) - assignedToMe(a)) || parseD(a.due) - parseD(b.due); });
   var e = expiryStats(loc);
   var noLabel = productsFor(loc).filter(function (p) { return !p.labelled; }).length;
 
@@ -3015,7 +3112,7 @@ function renderHome() {
 
   /* my tasks for staff/manager */
   if (!p.all) {
-    var mine = tasksFor(S.loc, wk).filter(function (t) { return ME.role !== 'staff' || t.assigned === ME.id; });
+    var mine = tasksFor(S.loc, wk).filter(function (t) { return ME.role !== 'staff' || assignedToMe(t); });
     var todo = mine.filter(function (t) { return t.status === 'pending' || t.status === 'rejected'; }).slice(0, 5);
     html += '<div class="sec-t">' + (ME.role === 'staff' ? 'My tasks this week' : 'Needs action this week') + '</div><div class="card pad0">';
     html += todo.length ? todo.map(taskRow).join('') : '<div class="empty"><div class="ic">🎉</div>All caught up for this week</div>';
@@ -3180,7 +3277,7 @@ function taskRow(t) {
     (ph ? '<img class="thumb" src="' + photoSrc(t.after || t.before) + '">' :
       '<span class="thumb" style="display:grid;place-items:center;color:#b8bfc4;font-size:19px">🧽</span>') +
     '<span class="grow">' + cnameHtml(tkeyOf(t), cleanName(t), 't trunc') +
-    '<div class="xs muted" style="margin:2px 0 5px">' + h(t.zone) + ' · ' + h(uname(t.assigned).split(' ')[0]) +
+    '<div class="xs muted" style="margin:2px 0 5px">' + h(t.zone) + ' · ' + h(shortAssignees(t)) +
     ' · ' + fmtD(t.due) + (t.time ? ' · ' + h(fmtTime(t.time)) : '') + '</div>' +
     statusPill(t) + (t.freq === 'M' ? ' ' + pill('MONTHLY', 'p-blu') : '') +
     (fixedDay(t) != null ? ' ' + pill('EVERY ' + DAY_NAMES[fixedDay(t)].toUpperCase(), 'p-yel') : '') +
@@ -3206,7 +3303,7 @@ function renderClean() {
     if (f === 'rejected') return t.status === 'rejected';
     if (f === 'approve') return t.status === 'completed' && !t.approved;
     if (f === 'nophoto') return missingPhoto(t);
-    if (f === 'mine') return t.assigned === ME.id;
+    if (f === 'mine') return assignedToMe(t);
     return true;
   });
   var html = header('FULL KITCHEN DEEP CLEAN', lname(loc));
@@ -3271,7 +3368,7 @@ function taskSheet(id) {
     renameNote(t) +
     '<div class="sm muted">' + h(t.zone) + ' · ' + (t.freq === 'M' ? 'Monthly heavy job' : fixedDay(t) != null ? 'Weekly job · every ' + DAY_NAMES[fixedDay(t)] : 'Weekly job') + ' · ' + h(lname(t.loc)) + '</div></div>' + statusPill(t) + '</div>' +
     '<div class="grid2" style="margin-top:12px">' +
-    kv('Assigned to', uname(t.assigned)) + kv('Due date', fmtD(t.due) + (t.time ? ' · ' + fmtTime(t.time) : '')) +
+    kv('Assigned to', assigneeNames(t)) + kv('Due date', fmtD(t.due) + (t.time ? ' · ' + fmtTime(t.time) : '')) +
     kv('Done by', t.completedBy ? uname(t.completedBy) : t.completedAt ? uname(t.assigned) : '—') +
     kv('Completed', t.completedAt ? fmtDT(t.completedAt) : '—') + '</div>' +
     (t.status === 'rejected' ? '<div class="card" style="background:#fdecea;border-color:#f6c9c4;margin:12px 0 0"><b class="sm">Rejected — ' + h(uname(t.approvedBy)) + (t.approvedAt ? ' · ' + h(fmtDT(t.approvedAt)) : '') + '</b><div class="sm">' + h(t.reject) + '</div></div>' : '') +
@@ -4944,9 +5041,9 @@ function renderTypeServices() {
   html += '<label class="f" style="margin-top:10px"><span>Assigned to</span>' +
     '<select class="inp" id="mg_who">' +
     '<option value=""' + (MGMT_WHO === '' ? ' selected' : '') + '>Everyone · all ' + list.length + '</option>' +
-    '<option value="__none"' + (MGMT_WHO === '__none' ? ' selected' : '') + '>Nobody yet · ' + list.filter(function (j) { return !j.assignedTo; }).length + '</option>' +
+    '<option value="__none"' + (MGMT_WHO === '__none' ? ' selected' : '') + '>Nobody yet · ' + list.filter(function (j) { return !assigneesOf(j).length; }).length + '</option>' +
     people.map(function (u) {
-      var n = list.filter(function (j) { return j.assignedTo === u.id; }).length;
+      var n = list.filter(function (j) { return assigneesOf(j).indexOf(u.id) > -1; }).length;
       return '<option value="' + h(u.id) + '"' + (MGMT_WHO === u.id ? ' selected' : '') + '>' + h(u.name) +
         ' · ' + h(ROLES[u.role] ? ROLES[u.role].label : u.role) + ' · ' + n + '</option>';
     }).join('') + '</select></label>';
@@ -4955,9 +5052,9 @@ function renderTypeServices() {
     if (MGMT_FILTER === 'noloc' && !isAllOutlets(j)) return false;
     if (MGMT_FILTER === 'one' && !(j.locs && j.locs.length === 1)) return false;
     if (MGMT_FILTER === 'multi' && !(j.locs && j.locs.length > 1)) return false;
-    if (MGMT_WHO === '__none' && j.assignedTo) return false;
-    if (MGMT_WHO && MGMT_WHO !== '__none' && j.assignedTo !== MGMT_WHO) return false;
-    return mgMatches([j.area, j.zone || '', j.assignedTo ? uname(j.assignedTo) : '']);
+    if (MGMT_WHO === '__none' && assigneesOf(j).length) return false;
+    if (MGMT_WHO && MGMT_WHO !== '__none' && assigneesOf(j).indexOf(MGMT_WHO) === -1) return false;
+    return mgMatches([j.area, j.zone || '', assigneeNames(j)]);
   });
   html += '<div class="sec-t">Services · ' + shown.length + '</div>';
   html += mgTable(['Name', 'Area', 'Frequency', 'Restaurants', 'Assigned To', 'Status', 'Actions'],
@@ -4969,8 +5066,7 @@ function renderTypeServices() {
         '<td class="sm">' + cellEdit(j.tk, 'freq', freqLabel(j.freq)) +
           (j.freq === 'W' ? '<div class="xs muted">' + cellEdit(j.tk, 'day', j.day == null ? 'Spread across the week' : 'Every ' + DAY_NAMES[j.day]) + '</div>' : '') + '</td>' +
         '<td class="sm">' + locCell(j) + '</td>' +
-        '<td class="sm">' + cellEdit(j.tk, 'assignedTo', j.assignedTo ? uname(j.assignedTo) : 'Anyone on shift', j.assignedTo ? '' : 'muted') +
-          (j.assignedTo && userById(j.assignedTo) ? '<div class="xs muted">' + h(ROLES[userById(j.assignedTo).role] ? ROLES[userById(j.assignedTo).role].label : '') + '</div>' : '') + '</td>' +
+        '<td class="sm">' + peopleCell(j) + '</td>' +
         '<td>' + (function () {
           var live = j.enabled && !j.stopped;
           var lbl = j.stopped ? 'DELETED' : live ? 'ACTIVE' : 'OFF';
@@ -4999,6 +5095,31 @@ function locCell(j) {
     h(lbl) + '</button>' +
     (isAllOutlets(j) ? '<div class="xs" style="color:var(--org)">needs restaurants</div>'
                      : '<div class="xs muted trunc">' + h(ttl) + '</div>');
+}
+
+/* Who the job is given to. Several people do not fit the inline editor, which
+   is one input or one dropdown, so this opens the same tick list the Add Job
+   form uses — as the restaurants cell already does. */
+function peopleCell(j) {
+  var ids = assigneesOf(j), lbl = ids.length ? shortAssignees(j) : 'Anyone on shift';
+  if (!canManageClean()) return '<span title="' + h(assigneeNames(j)) + '">' + h(lbl) + '</span>';
+  return '<button class="linkish b' + (ids.length ? '' : ' muted') + '" data-a="editPeople" data-x="' + h(j.tk) + '" title="' + h(assigneeNames(j)) + '">' +
+    h(lbl) + '</button>' +
+    (ids.length > 1 ? '<div class="xs muted trunc">' + h(assigneeNames(j)) + '</div>' : '');
+}
+function peopleSheet(tk) {
+  var j = jobFor(tk);
+  if (!j) { toast('Unknown cleaning job'); return; }
+  var roster = peopleForType(taskJobType(j));
+  openSheet('Assigned to · ' + j.area,
+    '<div class="card">' +
+    '<div class="sm muted" style="margin-bottom:4px">Everyone ticked sees this job in their own account.</div>' +
+    peopleChecks('sp', roster, assigneesOf(j)) +
+    '</div>' +
+    '<div class="card sm muted">Someone at another kitchen sees only the jobs given to them there, not the rest of that kitchen’s work.</div>' +
+    '<div class="btnrow"><button class="btn sec" data-a="closeSheet">Cancel</button>' +
+    '<button class="btn ok" data-a="savePeople" data-x="' + h(tk) + '">Save</button></div>');
+  wirePeopleChecks('sp');
 }
 
 /* The picker itself. */
@@ -5094,17 +5215,19 @@ var ADDJOB_ERR = '';
    kept here and put back. Restaurants are required now, so that path is an
    ordinary thing to hit, and losing the form to it would be maddening. */
 var ADDJOB_LOCS = [];
+var ADDJOB_USERS = [];      /* the people ticked on the Add Job form */
 var ADDJOB_FORM = null;
 function stashAddJob() {
   var g = function (k) { var e = document.getElementById(k); return e ? e.value : ''; };
-  ADDJOB_FORM = { pick: g('aj_pick'), name: g('aj_name'), zone: g('aj_zone'), user: g('aj_user'),
+  ADDJOB_USERS = readPeopleChecks('aj');
+  ADDJOB_FORM = { pick: g('aj_pick'), name: g('aj_name'), zone: g('aj_zone'),
                   date: g('aj_date'), time: g('aj_time'), freq: g('aj_freq'), day: g('aj_day'), end: g('aj_end') };
   ADDJOB_LOCS = readLocChecks('aj');
 }
 function restoreAddJob() {
   var f = ADDJOB_FORM; if (!f) return;
   var set = function (k, v) { var e = document.getElementById(k); if (e && v) e.value = v; };
-  set('aj_pick', f.pick); set('aj_zone', f.zone); set('aj_user', f.user);
+  set('aj_pick', f.pick); set('aj_zone', f.zone);
   set('aj_date', f.date); set('aj_time', f.time); set('aj_freq', f.freq);
   set('aj_day', f.day); set('aj_end', f.end);
   var nameBox = document.getElementById('aj_name');
@@ -5134,16 +5257,11 @@ function addJobForm(presetType) {
     locChecks('aj', ADDJOB_LOCS) +
     '<div class="xs muted" style="margin-top:6px">The job runs only where it is ticked.</div></div>' +
 
-    '<label class="f" style="margin-top:12px"><span>4 · Assign To User</span><select class="inp" id="aj_user">' +
-    '<option value="">Whoever is on shift</option>' +
-    roster.map(function (u) {
-      return '<option value="' + h(u.id) + '" data-loc="' + h(u.loc || '') + '">' + h(u.name) +
-        ' · ' + h(ROLES[u.role] ? ROLES[u.role].label : u.role) +
-        ' · ' + h(u.loc ? lname(u.loc) : 'All kitchens') + '</option>';
-    }).join('') + '</select>' +
+    '<div class="f" style="margin-top:12px"><span>4 · Assign Users</span>' +
+    peopleChecks('aj', roster, ADDJOB_USERS) +
     '<div class="xs muted" style="margin-top:6px">' + (nobodyHasType(typeId)
       ? '⚠️ Nobody is set to ' + h(jobTypeName(typeId)) + ' yet, so everyone is listed. Set job types in User Management.'
-      : 'Only people set to ' + h(jobTypeName(typeId)) + ' are listed.') + '</div></label>' +
+      : 'Only people set to ' + h(jobTypeName(typeId)) + ' are listed.') + '</div></div>' +
 
     '<div class="grid2" style="margin-top:12px">' +
     '<label class="f"><span>5 · Date</span><input class="inp" id="aj_date" type="date" value="' + ymd(today()) + '"></label>' +
@@ -5197,6 +5315,7 @@ function addJobForm(presetType) {
   document.getElementById('aj_pick').addEventListener('change', syncNew);
   document.getElementById('aj_freq').addEventListener('change', refreshFreq);
   wireLocChecks('aj');
+  wirePeopleChecks('aj');
   refreshNames(); refreshFreq();
   restoreAddJob();
 }
@@ -5215,7 +5334,7 @@ function saveAddJob() {
   if (!locs.length) { ADDJOB_ERR = 'Tick at least one restaurant'; closeSheet(); addJobForm(typeId); return; }
 
   var zone = g('aj_zone').replace(/\s+/g, ' ').trim() || jobTypeName(typeId);
-  var user = g('aj_user') || null;
+  var users = readPeopleChecks('aj');
   var date = g('aj_date') || ymd(today());
   var time = g('aj_time') || null;
   var freq = g('aj_freq');
@@ -5233,7 +5352,7 @@ function saveAddJob() {
         id: 'T-' + L.code + '-once-' + stamp,
         loc: L.id, period: weekId(parseD(date)), freq: 'W', tk: null,
         area: name, zone: zone, jobType: typeId,
-        assigned: user, due: date, time: time, status: 'pending',
+        assigned: users.length ? users[0] : null, assignees: users.slice(), due: date, time: time, status: 'pending',
         before: null, after: null, approved: null, approvedBy: null, approvedAt: null, reject: '',
         completedAt: null, completedBy: null, note: '', _u: Date.now()
       };
@@ -5242,7 +5361,7 @@ function saveAddJob() {
       logAct('clean', 'Job added: ' + name + ' · ' + fmtD(date), L.id);
       made++;
     });
-    ADDJOB_ERR = ''; ADDJOB_LOCS = []; ADDJOB_FORM = null;
+    ADDJOB_ERR = ''; ADDJOB_LOCS = []; ADDJOB_USERS = []; ADDJOB_FORM = null;
     closeSheet(); S.manage = 'jobs'; render();
     toast('“' + name + '” added at ' + made + ' restaurant' + (made === 1 ? '' : 's'));
     return;
@@ -5251,11 +5370,11 @@ function saveAddJob() {
   Api.post('/api/checklist/items', {
     name: name, zone: zone, freq: freq, jobType: typeId,
     day: freq === 'W' && g('aj_day') !== '' ? Number(g('aj_day')) : null,
-    locs: locs, assignedTo: user, atTime: time, endDate: end
+    locs: locs, assignees: users, atTime: time, endDate: end
   }).then(function (res) {
     var item = res && res.item;
     if (!item) { toast('Could not add the job'); return; }
-    ADDJOB_ERR = ''; ADDJOB_LOCS = []; ADDJOB_FORM = null;
+    ADDJOB_ERR = ''; ADDJOB_LOCS = []; ADDJOB_USERS = []; ADDJOB_FORM = null;
     DB.checklist[item.tkey] = item;
     ensureJobs(); saveLocal();
     logAct('clean', 'Repeating job added: ' + name + ' · ' + locsTitle(item.locs), null);
@@ -5307,6 +5426,7 @@ function render() {
      left behind by an all-locations account, or an id that no longer matches a
      kitchen, used to reach locById() as null and take the whole screen down.
      It matters more now that roles and kitchens are changed from Management. */
+  GUEST_LOCS = null;
   if (S.loc && S.loc !== 'ALL' && !locById(S.loc)) S.loc = null;
   if (S.loc === 'ALL' && !perm().all) S.loc = ME.loc || visibleLocations()[0].id;
   if (S.tab !== 'home' && S.tab !== 'rep' && S.tab !== 'manage' && S.loc === 'ALL') S.loc = visibleLocations()[0].id;
@@ -5314,6 +5434,9 @@ function render() {
      it was arrived at — a stale tab from the last session, a deep link, an old
      button. The nav hides it; this is what makes it true. */
   if (!tabAllowed(S.tab)) S.tab = 'home';
+  /* Being given a job at another kitchen shows that job, not that kitchen's
+     products, so the label and expiry screens stay on the home kitchen. */
+  if ((S.tab === 'exp' || S.tab === 'lab') && isGuestLoc(S.loc)) S.loc = ME.loc || visibleLocations()[0].id;
   if (S.tab === 'manage') renderManage();
   else if (S.tab === 'home') renderHome();
   else if (S.tab === 'clean') renderClean();
@@ -5372,7 +5495,7 @@ document.addEventListener('click', function (ev) {
     case 'addJob': {
       if (!perm().superadmin) break;
       if (!x) { toast('Open a job type first'); break; }
-      ADDJOB_ERR = ''; ADDJOB_LOCS = []; ADDJOB_FORM = null; closeSheet(); addJobForm(x);
+      ADDJOB_ERR = ''; ADDJOB_LOCS = []; ADDJOB_USERS = []; ADDJOB_FORM = null; closeSheet(); addJobForm(x);
       break;
     }
     case 'saveAddJob': saveAddJob(); break;
@@ -5383,6 +5506,14 @@ document.addEventListener('click', function (ev) {
       var jb = jobFor(x);
       closeSheet();
       saveCleanField(x, 'locs', picked, (jb && jb.locs) || null);
+      break;
+    }
+    case 'editPeople': if (!perm().superadmin) break; closeSheet(); peopleSheet(x); break;
+    case 'savePeople': {
+      var who = readPeopleChecks('sp');
+      var jp = jobFor(x);
+      closeSheet();
+      saveCleanField(x, 'assignees', who, assigneesOf(jp));
       break;
     }
     case 'mgmtReload': MGMT_ERR = ''; mgmtLoadUsers(true); render(); break;
