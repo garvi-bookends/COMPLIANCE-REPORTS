@@ -15116,28 +15116,14 @@ function renderTypeServices() {
   html += '<button class="btn ok" data-a="addJob" data-x="' + h(t.id) + '" style="margin-top:12px">＋ Add Service</button>';
   html += mgSearchBox(MGMT_Q, 'Service name or area');
 
-  /* All / Active / Completed, on the one question this table is opened to
-     answer: what still needs doing. It reads the same serviceState() the
-     Status column does, so a chip's count always matches the rows it shows.
-
-     There are deliberately no chips for how many restaurants a service runs
-     at: the Restaurants column says that per row, and the tile above counts
-     the ones still unset. */
-  var f = svcFilter();
-  var byState = { deleted: 0, off: 0, active: 0, completed: 0 };
-  list.forEach(function (j) { byState[serviceState(j)]++; });
-  /* Named, because the jobs section below has a chips row of its own. */
-  html += '<div id="mg_svc_filter">' + mgChips([['all', 'All services ' + list.length],
-    ['active', 'Active services ' + byState.active],
-    ['completed', 'Completed services ' + byState.completed]], f) + '</div>';
-
-  /* The services the chip covers, then whatever was searched for. Nothing
-     else narrows the table: the Assigned To column already names who has
-     each service and opens the tick list to change it, and the search box
-     takes a person's name, so a dropdown to pick one was a third way to do
-     what those two already did. */
-  var inState = list.filter(function (j) { return f === 'all' || serviceState(j) === f; });
-  var shown = inState.filter(function (j) {
+  /* The search box is the only thing that narrows this table. It has had
+     chips over it twice — once for how many restaurants a service runs at,
+     once for whether its work was finished — and both times they split the
+     list on something the table already says per row, in the Restaurants and
+     Status columns. The Assigned To column names who has each service, and
+     the search matches a person's name as well as the service and the area,
+     so one box covers all three. */
+  var shown = list.filter(function (j) {
     return mgMatches([j.area, j.zone || '', assigneeNames(j)]);
   });
   html += '<div class="sec-t">Services · ' + shown.length +
@@ -15157,7 +15143,7 @@ function renderTypeServices() {
              and COMPLETED once the last of it is approved — so the column
              answers "is anything outstanding here?" rather than "is this
              switched on?" The two are not the same, so the line underneath
-             says which. It reads the same serviceState() the chips count. */
+             says which. */
           var PILL = { deleted: ['DELETED', 'p-red', ''],
                        off: ['OFF', 'p-org', 'switched off'],
                        active: ['ACTIVE', 'p-grn', ''],
@@ -15169,9 +15155,7 @@ function renderTypeServices() {
         })() + '</td>' +
         '<td class="nowrap">' + mgBtn('deleteClean', j.tk, '✕', 'Delete service', 'background:#f6e7e5;color:var(--red)') + '</td>' +
         '</tr>';
-    }), f === 'active' ? 'Nothing is outstanding — every service here is up to date'
-     : f === 'completed' ? 'Nothing has been signed off yet'
-     : 'No services under this job type yet') + '</div>';
+    }), 'No services under this job type yet') + '</div>';
 
   html += jobsSection(t);
 
@@ -15222,12 +15206,6 @@ function serviceState(j) {
   if (j.stopped) return 'deleted';
   if (!j.enabled) return 'off';
   return serviceHasLiveWork(j.tk) ? 'active' : 'completed';
-}
-/* MGMT_FILTER is shared with the other management screens, so it can arrive
-   here holding one of their values. Anything this table does not know means
-   All, rather than an empty list with no way to tell why. */
-function svcFilter() {
-  return MGMT_FILTER === 'active' || MGMT_FILTER === 'completed' ? MGMT_FILTER : 'all';
 }
 function jobsSection(t) {
   var all = jobsOfType(t.id);
