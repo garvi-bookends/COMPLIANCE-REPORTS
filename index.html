@@ -15116,10 +15116,21 @@ function renderTypeServices() {
   }
   html += '<button class="btn ok" data-a="addJob" data-x="' + h(t.id) + '" style="margin-top:12px">＋ Add Service</button>';
   html += mgSearchBox(MGMT_Q, 'Service name or area');
-  /* No chips for how many restaurants a service runs at. The Restaurants
-     column says that per service and the tile above counts the ones still
-     unset, so splitting the list four ways only got in the way of the two
-     controls people actually use here: search, and Assigned to. */
+
+  /* All / Active / Completed, on the one question this table is opened to
+     answer: what still needs doing. It reads the same serviceState() the
+     Status column does, so a chip's count always matches the rows it shows.
+
+     There are deliberately no chips for how many restaurants a service runs
+     at: the Restaurants column says that per row, and the tile above counts
+     the ones still unset. */
+  var f = svcFilter();
+  var byState = { deleted: 0, off: 0, active: 0, completed: 0 };
+  list.forEach(function (j) { byState[serviceState(j)]++; });
+  /* Named, because the jobs section below has a chips row of its own. */
+  html += '<div id="mg_svc_filter">' + mgChips([['all', 'All services ' + list.length],
+    ['active', 'Active services ' + byState.active],
+    ['completed', 'Completed services ' + byState.completed]], f) + '</div>';
 
   /* Who a job belongs to. The Super Admin gives jobs out here, so the table
      narrows to one person rather than always showing every service. */
@@ -15135,11 +15146,13 @@ function renderTypeServices() {
     }).join('') + '</select></label>';
 
   var shown = list.filter(function (j) {
+    if (f !== 'all' && serviceState(j) !== f) return false;
     if (MGMT_WHO === '__none' && assigneesOf(j).length) return false;
     if (MGMT_WHO && MGMT_WHO !== '__none' && assigneesOf(j).indexOf(MGMT_WHO) === -1) return false;
     return mgMatches([j.area, j.zone || '', assigneeNames(j)]);
   });
-  html += '<div class="sec-t">Services · ' + shown.length + '</div>';
+  html += '<div class="sec-t">Services · ' + shown.length +
+    (shown.length !== list.length ? ' of ' + list.length : '') + '</div>';
   html += '<div id="mg_services">' + mgTable(['Name', 'Area', 'Frequency', 'Restaurants', 'Assigned To', 'Status', 'Actions'],
     shown.map(function (j) {
       /* Every detail is editable in place — same mechanism for all of them. */
@@ -15151,22 +15164,25 @@ function renderTypeServices() {
         '<td class="sm">' + locCell(j) + '</td>' +
         '<td class="sm">' + peopleCell(j) + '</td>' +
         '<td>' + (function () {
-          /* A service is ACTIVE while it has work nobody has signed off yet. The
-             moment the last of it is approved it reads OFF, and it reads OFF
-             again the moment the next one is generated — so the column answers
-             "is anything outstanding here?" rather than "is this switched on?"
-             The two are not the same, so the line underneath says which. */
-          var on = j.enabled && !j.stopped;
-          var busy = on && serviceHasLiveWork(j.tk);
-          var lbl = j.stopped ? 'DELETED' : busy ? 'ACTIVE' : 'OFF';
-          var cls = j.stopped ? 'p-red' : busy ? 'p-grn' : 'p-org';
-          var note = j.stopped ? '' : !on ? 'switched off' : busy ? '' : 'all work approved';
+          /* A service is ACTIVE while it has work nobody has signed off yet,
+             and COMPLETED once the last of it is approved — so the column
+             answers "is anything outstanding here?" rather than "is this
+             switched on?" The two are not the same, so the line underneath
+             says which. It reads the same serviceState() the chips count. */
+          var PILL = { deleted: ['DELETED', 'p-red', ''],
+                       off: ['OFF', 'p-org', 'switched off'],
+                       active: ['ACTIVE', 'p-grn', ''],
+                       completed: ['COMPLETED', 'p-blu', 'all work approved'] };
+          var p = PILL[serviceState(j)];
+          var lbl = p[0], cls = p[1], note = p[2];
           return (canManageClean() ? cellEdit(j.tk, 'status', lbl, 'pill ' + cls) : pill(lbl, cls)) +
             (note ? '<div class="xs muted">' + note + '</div>' : '');
         })() + '</td>' +
         '<td class="nowrap">' + mgBtn('deleteClean', j.tk, '✕', 'Delete service', 'background:#f6e7e5;color:var(--red)') + '</td>' +
         '</tr>';
-    }), 'No services under this job type yet') + '</div>';
+    }), f === 'active' ? 'Nothing is outstanding — every service here is up to date'
+     : f === 'completed' ? 'Nothing has been signed off yet'
+     : 'No services under this job type yet') + '</div>';
 
   html += jobsSection(t);
 
@@ -15201,6 +15217,30 @@ function serviceHasLiveWork(tk) {
   return DB.tasks.some(function (t) {
     return tkeyOf(t) === tk && taskLive(t) && !jobFinished(t);
   });
+}
+/* Where a service stands, in one word. The Status column and the chips above
+   the table both read this, so a chip can never disagree with the row it
+   shows.
+
+   'deleted'   it is no longer part of the setup
+   'off'       switched off, so nothing is being scheduled for it
+   'active'    running, with something outstanding — not done, or sent in
+               and waiting on the Super Admin
+   'completed' running, and every job it has produced is approved
+
+   A switched-off service is neither active nor completed, so the two chips do
+   not have to add up to All. Counting it as either would be a lie: it is not
+   waiting on anyone, and nothing was finished. */
+function serviceState(j) {
+  if (j.stopped) return 'deleted';
+  if (!j.enabled) return 'off';
+  return serviceHasLiveWork(j.tk) ? 'active' : 'completed';
+}
+/* MGMT_FILTER is shared with the other management screens, so it can arrive
+   here holding one of their values. Anything this table does not know means
+   All, rather than an empty list with no way to tell why. */
+function svcFilter() {
+  return MGMT_FILTER === 'active' || MGMT_FILTER === 'completed' ? MGMT_FILTER : 'all';
 }
 function jobsSection(t) {
   var all = jobsOfType(t.id);
