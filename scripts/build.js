@@ -76,6 +76,18 @@ if (process.env.VERCEL) {
 
   if (!env.DATABASE_URL) fail('DATABASE_URL is not set. Add the Neon database under Vercel → Storage and connect it to this project.');
 
+  /* The example connection string is a shape, not an address: its host is
+     literally ep-XXXX-pooler.REGION.aws.neon.tech. Pasted into Vercel as-is
+     it fails several seconds later as a DNS error, which reads like a
+     network fault rather than an unedited placeholder. Name it here. */
+  if (/ep-XXXX|REGION\.aws|USER:PASSWORD/.test(env.DATABASE_URL)) {
+    fail('DATABASE_URL is still the example from .env.example — its host does not exist.\n' +
+      '  Replace it with the real connection string:\n' +
+      '    Vercel → Storage → your Neon database → .env.local tab → copy DATABASE_URL\n' +
+      '  Connecting the Neon integration sets it for you; delete any DATABASE_URL you typed by hand first,\n' +
+      '  because a manually added variable overrides the one the integration provides.');
+  }
+
   var steps = [['migrate', 'server/scripts/migrate.js']];
   if (env.SEED_ADMIN_PASSWORD) steps.push(['seed', 'server/scripts/seed.js']);
   else console.log('[build] SEED_ADMIN_PASSWORD not set — skipping account creation');
