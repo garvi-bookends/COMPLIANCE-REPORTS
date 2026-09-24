@@ -15247,9 +15247,15 @@ function jobsSection(t) {
           (jobFinished(x) && x.approvedAt ? '<div class="xs muted">' + h(uname(x.approvedBy)) + ' · ' + h(fmtD(ymd(new Date(x.approvedAt)))) + '</div>' : '') +
           (x.status === 'rejected' && x.reject ? '<div class="xs" style="color:var(--red)">' + h(x.reject) + '</div>' : '') +
         '</td></tr>';
-    }), MGMT_JOBS === 'done' ? 'Nothing has been approved yet'
-     : MGMT_JOBS === 'all' ? 'No work under this job type yet'
-     : 'No live work under this job type');
+    }), /* Named after the job type, so the sentence is about what the person
+           is actually looking at: "No active cleaning jobs found." The list
+           is empty for a different reason under each chip, and saying which
+           is the difference between "there is none" and "this is broken". */
+       (function (what) {
+         return MGMT_JOBS === 'done' ? 'No completed ' + what + ' jobs found.'
+              : MGMT_JOBS === 'active' ? 'No active ' + what + ' jobs found.'
+              : 'No ' + what + ' jobs found.';
+       })(String(t.name || 'cleaning').toLowerCase()));
 
   if (list.length > 60) {
     html += '<div class="card sm muted center">Showing the first 60 of ' + list.length + '</div>';
