@@ -174,6 +174,28 @@ button,input,select,textarea{font:inherit;color:inherit}
 label.f{display:block;margin-bottom:12px}
 label.f>span{display:block;font-size:12.5px;font-weight:800;color:var(--mut);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px}
 .inp{width:100%;min-height:54px;border:1.5px solid var(--line);border-radius:13px;padding:12px 14px;background:#fff;font-size:16px}
+
+/* ---------- signed out ----------
+   Sign in, sign up and forgot-password have no nav, so the page must not
+   leave a 232px strip for a sidebar that is not there — it pushed the whole
+   screen right and stretched the form to 968px on a desktop. One centred
+   column instead, at a width a form is actually readable in. */
+body.signedout #app{padding:0;max-width:none}
+.authwrap{min-height:100vh;min-height:100dvh;display:flex;flex-direction:column;justify-content:center;
+  align-items:center;padding:28px 16px calc(env(safe-area-inset-bottom) + 28px)}
+.authbox{width:100%;max-width:400px}
+.authbox .card{margin-bottom:12px}
+.authbrand{text-align:center;margin-bottom:20px}
+.authbrand b{display:block;color:var(--brand);font-size:24px;font-weight:800;letter-spacing:2.5px}
+.authbrand span{display:block;color:var(--mut);font-size:11.5px;font-weight:700;letter-spacing:1.4px;margin-top:5px;text-transform:uppercase}
+/* The two secondary actions were a full-width white button each, which read
+   as loud as Sign in. They are one quiet row under the card. */
+.authlinks{display:flex;flex-wrap:wrap;justify-content:center;align-items:center;gap:6px 14px;margin:4px 0 2px}
+.authlinks button{background:none;border:0;padding:8px 2px;min-height:44px;font:inherit;font-size:14px;font-weight:700;
+  color:var(--brand);cursor:pointer;text-decoration:underline;text-underline-offset:3px}
+.authlinks .sep{color:var(--line)}
+.authnote{font-size:13px;line-height:1.5;color:var(--mut);text-align:center;margin:2px 4px 14px}
+.authfoot{font-size:12px;color:var(--mut);text-align:center;margin-top:18px}
 select.inp{appearance:none;background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='%236a7480'><path d='M7 10l5 5 5-5z'/></svg>");background-repeat:no-repeat;background-position:right 14px center}
 .inp:focus{outline:0;border-color:var(--brand2);box-shadow:0 0 0 3px rgba(18,103,76,.12)}
 .chips{display:flex;gap:8px;overflow-x:auto;padding:2px 0 6px;-webkit-overflow-scrolling:touch}
@@ -12540,29 +12562,45 @@ var LOGIN_ERR = '';
    in a kitchen. The password is deliberately NOT kept: it is never held in a
    variable any longer than the request needs it. */
 var LOGIN_UID = '';
-function renderLogin() {
+/* The chrome every signed-out screen shares: no nav, the wordmark above a
+   single centred column. `signedout` on <body> is what drops the sidebar
+   gutter; render() takes it off again as soon as somebody is signed in. */
+function authShell(inner) {
   $('#tabbar').innerHTML = '';
+  document.body.classList.add('signedout');
   $('#app').innerHTML =
-    '<div class="hdr" style="padding-bottom:26px"><div class="hdr-row"><h1 style="font-size:20px">BOOKENDS<small>Kitchen Operations &amp; Compliance</small></h1></div></div>' +
-    '<div class="wrap">' +
+    '<div class="authwrap"><div class="authbox">' +
+    '<div class="authbrand"><b>BOOKENDS</b><span>Kitchen Operations &amp; Compliance</span></div>' +
+    inner +
+    '<div class="authfoot">Bookends Kitchen Compliance System</div>' +
+    '</div></div>';
+}
+/* Shown on every signed-out screen, because all three need the server. */
+function offlineNote() {
+  return navigator.onLine ? '' :
+    '<div class="card sm" style="background:#fff6e5;border-color:#f0dcb0"><b>You are offline.</b> ' +
+    'This needs an internet connection. Once you are back online you can sign in, and the app will keep working offline after that.</div>';
+}
+function renderLogin() {
+  authShell(
     '<div class="card">' +
     '<div class="b" style="font-size:18px;margin-bottom:2px">Sign in</div>' +
     '<div class="sm muted" style="margin-bottom:14px">Use your own ID and password.</div>' +
     '<label class="f"><span>User ID</span><input class="inp" id="l_uid" value="' + h(LOGIN_UID) + '" placeholder="e.g. rahul" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false"></label>' +
-    '<label class="f"><span>Password</span><input class="inp" id="l_pw" type="password" placeholder="••••" autocomplete="current-password" inputmode="numeric"></label>' +
+    /* No dot-placeholder: four dots told anyone looking how long the
+       starting password is. */
+    '<label class="f"><span>Password</span><input class="inp" id="l_pw" type="password" autocomplete="current-password"></label>' +
     (LOGIN_ERR ? '<div class="card" style="background:#fdecea;border-color:#f6c9c4;margin:0 0 12px"><b class="sm">' + h(LOGIN_ERR) + '</b></div>' : '') +
     '<button class="btn" id="l_btn" data-a="doLogin">Sign in</button>' +
     '</div>' +
-    '<div class="card sm muted">First time signing in? Your ID is your first name in lower case and your password is <b>' + h(DEFAULT_PW) + '</b>. ' +
-    'The app will ask you to choose a new password straight away.</div>' +
-    '<button class="btn sec" data-a="showSignup" style="margin-bottom:12px">New here? Create your own account</button>' +
-    /* Signing in needs the server, unlike the rest of the app. Say so
-       plainly rather than letting the attempt fail with a vague error. */
-    (navigator.onLine ? '' :
-      '<div class="card sm" style="background:#fff6e5;border-color:#f0dcb0"><b>You are offline.</b> ' +
-      'Signing in needs an internet connection. Once you are back online you can sign in, and the app will keep working offline after that.</div>') +
-    '<button class="btn sec" data-a="showForgot" style="margin-bottom:12px">Forgot password?</button>' +
-    '<div class="sm muted center" style="margin:18px 6px">Bookends Kitchen Compliance System</div></div>';
+    offlineNote() +
+    '<div class="authnote">First time signing in? Your ID is your first name in lower case and your password is <b>' + h(DEFAULT_PW) + '</b>. ' +
+    'The app will ask you to choose a new one straight away.</div>' +
+    '<div class="authlinks">' +
+    '<button data-a="showSignup">Create an account</button>' +
+    '<span class="sep">|</span>' +
+    '<button data-a="showForgot">Forgot password?</button>' +
+    '</div>');
   /* After a failed attempt the ID is already filled in, so put the cursor
      where the work is: the password. */
   var f = document.getElementById(LOGIN_UID ? 'l_pw' : 'l_uid');
@@ -12615,11 +12653,8 @@ var SIGNUP_DRAFT = { name: '', uid: '', loc: '' };   /* kept across a failed att
 var SIGNUP_BUSY = false;
 
 function renderSignup() {
-  $('#tabbar').innerHTML = '';
   var dr = SIGNUP_DRAFT;
-  $('#app').innerHTML =
-    '<div class="hdr" style="padding-bottom:26px"><div class="hdr-row"><h1 style="font-size:20px">BOOKENDS<small>Kitchen Operations &amp; Compliance</small></h1></div></div>' +
-    '<div class="wrap">' +
+  authShell(
     '<div class="card">' +
     '<div class="b" style="font-size:18px;margin-bottom:2px">Create your account</div>' +
     '<div class="sm muted" style="margin-bottom:14px">Choose your own username and password.</div>' +
@@ -12635,8 +12670,9 @@ function renderSignup() {
     (SIGNUP_ERR ? '<div class="card" style="background:#fdecea;border-color:#f6c9c4;margin:0 0 12px"><b class="sm">' + h(SIGNUP_ERR) + '</b></div>' : '') +
     '<button class="btn" id="s_btn" data-a="doSignup">Create account</button>' +
     '</div>' +
-    '<div class="card sm muted">After you create it, the Super Admin (Husen) approves your account and sets what you can do. You can sign in once it is approved.</div>' +
-    '<button class="btn sec" data-a="backToLogin">I already have an account — sign in</button></div>';
+    offlineNote() +
+    '<div class="authnote">The Super Admin (Husen) approves your account and sets what you can do. You can sign in once it is approved.</div>' +
+    '<div class="authlinks"><button data-a="backToLogin">I already have an account</button></div>');
   var f = document.getElementById(dr.name ? 's_pw' : 's_name'); if (f) f.focus();
 }
 
@@ -12678,15 +12714,13 @@ function doSignup() {
 }
 
 function renderSignupDone(u) {
-  $('#tabbar').innerHTML = '';
-  $('#app').innerHTML =
-    '<div class="hdr" style="padding-bottom:26px"><div class="hdr-row"><h1 style="font-size:20px">BOOKENDS<small>Kitchen Operations &amp; Compliance</small></h1></div></div>' +
-    '<div class="wrap"><div class="card center"><div style="font-size:40px">✅</div>' +
+  authShell(
+    '<div class="card center"><div style="font-size:40px">✅</div>' +
     '<div class="b" style="font-size:18px;margin-top:6px">Account created</div>' +
     '<div class="sm muted" style="margin-top:4px">Thanks, ' + h(u.name.split(' ')[0]) + '.</div>' +
     '<div class="card" style="margin-top:14px;text-align:left"><div class="xs muted b">YOUR USERNAME</div><div class="b" style="font-size:20px">' + h(u.uid) + '</div></div>' +
     '<div class="sm muted">Your account now needs to be approved by the Super Admin (Husen). Once it is, sign in with this username and the password you just chose.</div></div>' +
-    '<button class="btn" data-a="backToLogin">Back to sign in</button></div>';
+    '<button class="btn" data-a="backToLogin">Back to sign in</button>');
 }
 
 /* ---------- forgot password ----------
@@ -12699,16 +12733,15 @@ var FORGOT_ERR = '';
 var FORGOT_BUSY = false;
 
 function renderForgot() {
-  $('#tabbar').innerHTML = '';
-  $('#app').innerHTML =
-    '<div class="hdr" style="padding-bottom:26px"><div class="hdr-row"><h1 style="font-size:20px">BOOKENDS<small>Kitchen Operations &amp; Compliance</small></h1></div></div>' +
-    '<div class="wrap"><div class="card">' +
+  authShell(
+    '<div class="card">' +
     '<div class="b" style="font-size:18px;margin-bottom:2px">Forgot your password?</div>' +
     '<div class="sm muted" style="margin-bottom:14px">Enter your username. The Super Admin (Husen) will set a temporary password for you.</div>' +
     '<label class="f"><span>Username</span><input class="inp" id="f_uid" value="' + h(LOGIN_UID) + '" placeholder="e.g. rahul" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false"></label>' +
     (FORGOT_ERR ? '<div class="card" style="background:#fdecea;border-color:#f6c9c4;margin:0 0 12px"><b class="sm">' + h(FORGOT_ERR) + '</b></div>' : '') +
     '<button class="btn" id="f_btn" data-a="doForgot">Ask for a new password</button></div>' +
-    '<button class="btn sec" data-a="backToLogin">Back to sign in</button></div>';
+    offlineNote() +
+    '<div class="authlinks"><button data-a="backToLogin">Back to sign in</button></div>');
   var f = document.getElementById('f_uid'); if (f) f.focus();
 }
 
@@ -12724,13 +12757,12 @@ function doForgot() {
   Api.call('POST', '/api/auth/forgot', { uid: uid }, { noAuth: true }).then(function (data) {
     FORGOT_BUSY = false; FORGOT_ERR = '';
     LOGIN_UID = uid;
-    $('#app').innerHTML =
-      '<div class="hdr" style="padding-bottom:26px"><div class="hdr-row"><h1 style="font-size:20px">BOOKENDS<small>Kitchen Operations &amp; Compliance</small></h1></div></div>' +
-      '<div class="wrap"><div class="card center"><div style="font-size:40px">📨</div>' +
+    authShell(
+      '<div class="card center"><div style="font-size:40px">📨</div>' +
       '<div class="b" style="font-size:18px;margin-top:6px">Request sent</div>' +
       '<div class="sm muted" style="margin-top:8px">' + h(data.message) + '</div>' +
       '<div class="sm muted" style="margin-top:8px">When you sign in with the temporary password, you will be asked to choose your own.</div></div>' +
-      '<button class="btn" data-a="backToLogin">Back to sign in</button></div>';
+      '<button class="btn" data-a="backToLogin">Back to sign in</button>');
   }, function (err) {
     FORGOT_BUSY = false;
     FORGOT_ERR = err.message || 'Could not send the request';
@@ -12740,17 +12772,19 @@ function doForgot() {
 
 /* ---------- forced password change ---------- */
 var PW_ERR = '';
+/* Still no nav at this point, so it belongs to the signed-out family even
+   though somebody has signed in: mustChange holds them here. */
 function renderSetPassword() {
-  $('#tabbar').innerHTML = '';
-  $('#app').innerHTML =
-    '<div class="hdr" style="padding-bottom:22px"><div class="hdr-row"><h1 style="font-size:19px">Choose your password<small>' + h(ME.name) + ' · ID ' + h(ME.uid) + '</small></h1></div></div>' +
-    '<div class="wrap"><div class="card sm muted">For your security you must replace the starting password before you use the app. Keep it to yourself — everything you do is recorded under your name.</div>' +
+  authShell(
     '<div class="card">' +
+    '<div class="b" style="font-size:18px;margin-bottom:2px">Choose your password</div>' +
+    '<div class="sm muted" style="margin-bottom:14px">' + h(ME.name) + ' · ID ' + h(ME.uid) + '</div>' +
     '<label class="f"><span>New password</span><input class="inp" id="p_new" type="password" placeholder="At least ' + MIN_PW_LEN + ' characters" autocomplete="new-password"></label>' +
     '<label class="f"><span>Type it again</span><input class="inp" id="p_new2" type="password" autocomplete="new-password"></label>' +
     (PW_ERR ? '<div class="card" style="background:#fdecea;border-color:#f6c9c4;margin:0 0 12px"><b class="sm">' + h(PW_ERR) + '</b></div>' : '') +
     '<button class="btn" id="p_btn" data-a="savePw">Save and continue</button></div>' +
-    '<button class="btn sec" data-a="logout">Sign in as someone else</button></div>';
+    '<div class="authnote">Replace the starting password before you use the app. Keep it to yourself — everything you do is recorded under your name.</div>' +
+    '<div class="authlinks"><button data-a="logout">Sign in as someone else</button></div>');
 }
 
 /* The new password is hashed on the server; this only collects and posts it.
@@ -15635,6 +15669,8 @@ function pullChecklist(cb) {
 function render() {
   if (!ME) { renderLogin(); return; }
   if (ME.mustChange) { renderSetPassword(); return; }
+  /* From here on there is a sidebar, so the page needs the room back. */
+  document.body.classList.remove('signedout');
   /* Keep the selected kitchen honest before anything reads it. A stale 'ALL'
      left behind by an all-locations account, or an id that no longer matches a
      kitchen, used to reach locById() as null and take the whole screen down.
@@ -16094,10 +16130,7 @@ function openPendingLink() {
    flashing the login screen at someone who is already signed in. */
 
 function renderBooting() {
-  $('#tabbar').innerHTML = '';
-  $('#app').innerHTML =
-    '<div class="hdr" style="padding-bottom:26px"><div class="hdr-row"><h1 style="font-size:20px">BOOKENDS<small>Kitchen Operations &amp; Compliance</small></h1></div></div>' +
-    '<div class="wrap"><div class="card center"><div class="sm muted">Signing you in…</div></div></div>';
+  authShell('<div class="card center"><div class="sm muted">Signing you in…</div></div>');
 }
 
 /* Starts sharing data with the other devices. Only once signed in: the
