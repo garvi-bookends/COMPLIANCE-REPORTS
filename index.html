@@ -15147,23 +15147,19 @@ function serviceWork(tk) {
    A switched-off service is neither active nor completed, so the two chips do
    not have to add up to All. Counting it as either would be a lie: it is not
    waiting on anyone, and nothing was finished. */
-/* The Status cell for a service. Two places draw a service now — the setup
-   table, where the Super Admin edits it, and the All tab above it, which only
-   lists — so the pill lives here and both read the same one.
+/* The Status cell answers one question: is this scheduled, or not. ACTIVE
+   and OFF are the only two words it uses, and they are exactly the two the
+   editor offers, so the column and the dropdown that changes it agree.
 
-   A service is ACTIVE while it has work nobody has signed off yet, and
-   COMPLETED once the last of it is approved, so the column answers "is
-   anything outstanding here?" rather than "is this switched on?" The two are
-   not the same, so the line underneath says which. */
-var SERVICE_PILL = { deleted: ['DELETED', 'p-red', ''],
-                     off: ['OFF', 'p-org', 'switched off'],
-                     active: ['ACTIVE', 'p-grn', ''],
-                     done: ['DONE', 'p-grn', 'all work approved'] };
+   Whether the work is finished is a different question with its own answer
+   on this page — the Done tab. The column used to try to say both, which is
+   how a row could read DONE while the dropdown behind it said "Active —
+   scheduled". */
 function serviceStatusCell(j, editable) {
-  var p = SERVICE_PILL[serviceState(j)];
-  var lbl = p[0], cls = p[1], note = p[2];
+  var on = j.enabled && !j.stopped;
+  var lbl = on ? 'ACTIVE' : 'OFF', cls = on ? 'p-grn' : 'p-org';
   return ((editable && canManageClean()) ? cellEdit(j.tk, 'status', lbl, 'pill ' + cls) : pill(lbl, cls)) +
-    (note ? '<div class="xs muted">' + note + '</div>' : '');
+    (on ? '' : '<div class="xs muted">switched off</div>');
 }
 function serviceState(j) {
   if (j.stopped) return 'deleted';
@@ -15198,8 +15194,7 @@ function oneTimeState(t) { return jobFinished(t) ? 'done' : 'active'; }
    is editable in place — there is no checklist row to edit — so the name
    opens the job itself, which is where a one-off is changed. */
 function oneTimeRow(t) {
-  var st = oneTimeState(t);
-  var p = SERVICE_PILL[st];
+  var done = jobFinished(t);
   var word = statusPill(t).replace(/<[^>]*>/g, '');
   return '<tr>' +
     '<td><button class="linkish b" data-a="task" data-x="' + h(t.id) + '">' + h(cleanName(t)) + '</button>' +
@@ -15210,8 +15205,8 @@ function oneTimeRow(t) {
     '<td class="sm">' + h(lname(t.loc)) + '</td>' +
     '<td class="sm" title="' + h(assigneeNames(t)) + '">' +
       h(assigneesOf(t).length ? shortAssignees(t) : 'Anyone on shift') + '</td>' +
-    '<td>' + pill(p[0], p[1]) +
-      (word && word !== p[0] ? '<div class="xs muted">' + h(word.toLowerCase()) + '</div>' : '') + '</td>' +
+    '<td>' + pill(done ? 'OFF' : 'ACTIVE', done ? 'p-org' : 'p-grn') +
+      '<div class="xs muted">' + (done ? 'work approved' : h(word.toLowerCase())) + '</div></td>' +
     '<td class="nowrap"></td>' +
     '</tr>';
 }
