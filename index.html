@@ -12518,7 +12518,11 @@ function myJobTypes() { return (ME && ME.jobTypes) || []; }
    comes first. Everyone else starts on the kitchen dashboard. */
 function homeTab() { return (ME && perm().superadmin) ? 'manage' : 'home'; }
 function tabAllowed(tab) {
-  if (tab === 'home' || tab === 'rep' || tab === 'manage') return true;
+  /* Reports is the Super Admin's. It reads across every kitchen and every
+     person, which is a different thing from doing the work in one of them,
+     and it is the one screen an ordinary account has no part in. */
+  if (tab === 'rep') return !!(ME && perm().superadmin);
+  if (tab === 'home' || tab === 'manage') return true;
   if (!ME || perm().superadmin) return true;
   var ids = myJobTypes();
   if (!ids.length) return true;                    /* nothing set = not restricted */
