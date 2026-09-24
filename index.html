@@ -12824,7 +12824,7 @@ function renderSimpleHome() {
   if (canClean) html += bigBtn('🧽', '#e6f5ee', 'CLEANING', todo.length ? todo.length + ' job' + (todo.length > 1 ? 's' : '') + ' to do' : 'All jobs done ✓', todo.length || '', 'tab', 'clean');
   if (canLab) html += bigBtn('🏷️', '#fbf6d9', 'LABEL A PRODUCT', 'Name it, set the dates, add a photo', noLabel || '', 'addProduct', '');
   if (canExp) html += bigBtn('📅', '#fdf0e0', 'CHECK EXPIRY', (e.expired + e.soon) ? (e.expired ? e.expired + ' expired' : '') + (e.expired && e.soon ? ' · ' : '') + (e.soon ? e.soon + ' expiring soon' : '') : 'Nothing expiring', (e.expired + e.soon) || '', 'tab', 'exp');
-  if (canLab) html += bigBtn('⛶', '#e8f0fd', 'SCAN A LABEL', 'Point the camera at the QR', '', 'scan', '');
+  if (canLab) html += bigBtn('🏷️', '#e8f0fd', 'NEW LABEL', 'Open the label form', '', 'addProduct', '');
 
   if (canClean && todo.length) {
     html += '<div class="sec-t">Jobs still to do this week</div><div class="card pad0">' + todo.slice(0, 8).map(taskRow).join('') + '</div>';
