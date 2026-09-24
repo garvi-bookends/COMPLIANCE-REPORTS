@@ -15155,10 +15155,16 @@ function serviceWork(tk) {
    on this page — the Done tab. The column used to try to say both, which is
    how a row could read DONE while the dropdown behind it said "Active —
    scheduled". */
-function serviceStatusCell(j, editable) {
+function serviceStatusCell(j, tab) {
+  /* Under Done the row IS the answer, so the column reads DONE and is not
+     editable there: the dropdown behind it only offers scheduled or not, and
+     a pill saying DONE over a dropdown saying "Active — scheduled" is the
+     contradiction this column was straightened out to end. The switch is
+     changed under All, where the pill and the dropdown say the same thing. */
+  if (tab === 'done') return pill('DONE', 'p-grn') + '<div class="xs muted">all work approved</div>';
   var on = j.enabled && !j.stopped;
   var lbl = on ? 'ACTIVE' : 'OFF', cls = on ? 'p-grn' : 'p-org';
-  return ((editable && canManageClean()) ? cellEdit(j.tk, 'status', lbl, 'pill ' + cls) : pill(lbl, cls)) +
+  return (canManageClean() ? cellEdit(j.tk, 'status', lbl, 'pill ' + cls) : pill(lbl, cls)) +
     (on ? '' : '<div class="xs muted">switched off</div>');
 }
 function serviceState(j) {
@@ -15193,7 +15199,7 @@ function oneTimeState(t) { return jobFinished(t) ? 'done' : 'active'; }
 /* Its row, shaped like a service's so the table reads straight down. Nothing
    is editable in place — there is no checklist row to edit — so the name
    opens the job itself, which is where a one-off is changed. */
-function oneTimeRow(t) {
+function oneTimeRow(t, tab) {
   var done = jobFinished(t);
   var word = statusPill(t).replace(/<[^>]*>/g, '');
   return '<tr>' +
@@ -15205,8 +15211,9 @@ function oneTimeRow(t) {
     '<td class="sm">' + h(lname(t.loc)) + '</td>' +
     '<td class="sm" title="' + h(assigneeNames(t)) + '">' +
       h(assigneesOf(t).length ? shortAssignees(t) : 'Anyone on shift') + '</td>' +
-    '<td>' + pill(done ? 'OFF' : 'ACTIVE', done ? 'p-org' : 'p-grn') +
-      '<div class="xs muted">' + (done ? 'work approved' : h(word.toLowerCase())) + '</div></td>' +
+    '<td>' + (tab === 'done' ? pill('DONE', 'p-grn') + '<div class="xs muted">work approved</div>'
+      : pill(done ? 'OFF' : 'ACTIVE', done ? 'p-org' : 'p-grn') +
+        '<div class="xs muted">' + (done ? 'work approved' : h(word.toLowerCase())) + '</div>') + '</td>' +
     '<td class="nowrap"></td>' +
     '</tr>';
 }
@@ -15254,7 +15261,7 @@ function jobsSection(t) {
 
   html += '<div id="mg_services">' + mgTable(['Name', 'Area', 'Frequency', 'Restaurants', 'Assigned To', 'Status', 'Actions'],
     shown.map(function (e) {
-      if (e.job) return oneTimeRow(e.job);
+      if (e.job) return oneTimeRow(e.job, tab);
       var j = e.svc;
       /* Every detail is editable in place — same mechanism for all of them. */
       return '<tr>' +
@@ -15264,7 +15271,7 @@ function jobsSection(t) {
           (j.freq === 'W' ? '<div class="xs muted">' + cellEdit(j.tk, 'day', j.day == null ? 'Spread across the week' : 'Every ' + DAY_NAMES[j.day]) + '</div>' : '') + '</td>' +
         '<td class="sm">' + locCell(j) + '</td>' +
         '<td class="sm">' + peopleCell(j) + '</td>' +
-        '<td>' + serviceStatusCell(j, true) + '</td>' +
+        '<td>' + serviceStatusCell(j, tab) + '</td>' +
         '<td class="nowrap">' + mgBtn('deleteClean', j.tk, '✕', 'Delete service', 'background:#f6e7e5;color:var(--red)') + '</td>' +
         '</tr>';
     }), MGMT_Q ? 'No ' + what + ' service matches “' + MGMT_Q + '”'
