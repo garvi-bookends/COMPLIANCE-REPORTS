@@ -12512,17 +12512,14 @@ var TYPE_TAB = { cleaning: 'clean', labelling: 'lab', labeling: 'lab' };
 function myJobTypes() { return (ME && ME.jobTypes) || []; }
 /* Home and Reports are not job types — one is where the day starts, the other
    where it is reviewed — so neither is ever hidden. */
-/* Where an account lands, and what it falls back to. The Super Admin runs
-   the system rather than working a kitchen, so Management is their home;
-   everyone else starts on the kitchen dashboard. */
+/* Where an account lands. The Super Admin runs the system, so Management is
+   their dashboard — it is what they see on signing in and what Dashboard
+   returns to. Every tab is still open to them; this only says which one
+   comes first. Everyone else starts on the kitchen dashboard. */
 function homeTab() { return (ME && perm().superadmin) ? 'manage' : 'home'; }
 function tabAllowed(tab) {
-  /* The Super Admin has no kitchen tabs at all — no Home, Cleaning, Expiry,
-     Labels or Reports. Their account exists to run the system, and a tab
-     that only ever bounced back is worse than no tab. */
-  if (ME && perm().superadmin) return tab === 'manage';
   if (tab === 'home' || tab === 'rep' || tab === 'manage') return true;
-  if (!ME) return true;
+  if (!ME || perm().superadmin) return true;
   var ids = myJobTypes();
   if (!ids.length) return true;                    /* nothing set = not restricted */
   var gated = {};
@@ -12533,8 +12530,6 @@ function tabAllowed(tab) {
 function tabbar() {
   var items = [['home', 'Home', 'home'], ['clean', 'Cleaning', 'clean'], ['exp', 'Expiry', 'exp'], ['lab', 'Labels', 'lab'], ['rep', 'Reports', 'rep']];
   if (ME.role === 'staff') items = items.slice(0, 4);
-  /* tabAllowed() empties this for the Super Admin, leaving the four
-     management rows below as their whole nav. */
   items = items.filter(function (t) { return tabAllowed(t[0]); });
 
   var nav = items.map(function (t) {
@@ -14663,7 +14658,8 @@ var MGMT_ITEMS = [
 function renderManageHome() {
   var waiting = PENDING_SIGNUPS + RESET_REQUESTS;
   var review = DB ? tasksAwaitingApproval().length : 0;
-  /* Nothing above this for the Super Admin, so no back button. */
+  /* This page IS the Super Admin's dashboard, so it has nothing to go back
+     to; for anyone else Dashboard means the kitchen home screen. */
   var html = mgHead('MANAGEMENT', 'Super Admin', perm().superadmin ? null : ['mgmtBack', 'Dashboard']);
   html += '<div class="card pad0">' + MGMT_ITEMS.map(function (it) {
     var badge = it[0] === 'users' ? waiting : it[0] === 'review' ? review : 0;
