@@ -15142,7 +15142,7 @@ function serviceWork(tk) {
    'off'       switched off, so nothing is being scheduled for it
    'active'    running, with something outstanding — not done, or sent in
                and waiting on the Super Admin
-   'completed' running, and every job it has produced is approved
+   'done'      every job it has produced is approved
 
    A switched-off service is neither active nor completed, so the two chips do
    not have to add up to All. Counting it as either would be a lie: it is not
@@ -15158,7 +15158,7 @@ function serviceWork(tk) {
 var SERVICE_PILL = { deleted: ['DELETED', 'p-red', ''],
                      off: ['OFF', 'p-org', 'switched off'],
                      active: ['ACTIVE', 'p-grn', ''],
-                     completed: ['COMPLETED', 'p-blu', 'all work approved'] };
+                     done: ['DONE', 'p-grn', 'all work approved'] };
 function serviceStatusCell(j, editable) {
   var p = SERVICE_PILL[serviceState(j)];
   var lbl = p[0], cls = p[1], note = p[2];
@@ -15172,7 +15172,7 @@ function serviceState(j) {
      happened to its schedule afterwards, and the two screens have to agree:
      switching a service off cannot un-complete the work it got through. */
   var work = serviceWork(j.tk);
-  if (work.length && work.every(jobFinished)) return 'completed';
+  if (work.length && work.every(jobFinished)) return 'done';
   if (!j.enabled) return 'off';
   /* Switched on with something outstanding — not done, sent in and waiting,
      or sent back. Only an approval closes one. */
@@ -15186,18 +15186,18 @@ function jobsSection(t) {
 
        All        every service under this job type
        Active     it has work outstanding
-       Completed  every job it has raised is approved
+       Done       every job it has raised is approved
 
      A service nobody has switched on has no work either way, so it is under
      All alone — counting it active or completed would be a lie about both.
      That is why the three counts need not add up. */
   var services = allServicesOfType(t.id).filter(function (j) { return !j.stopped; });
-  var byState = { deleted: [], off: [], active: [], completed: [] };
+  var byState = { deleted: [], off: [], active: [], done: [] };
   services.forEach(function (j) { byState[serviceState(j)].push(j); });
 
   var tab = MGMT_JOBS === 'active' || MGMT_JOBS === 'done' ? MGMT_JOBS : 'all';
   var what = String(t.name || 'cleaning').toLowerCase();
-  var inTab = tab === 'active' ? byState.active : tab === 'done' ? byState.completed : services;
+  var inTab = tab === 'all' ? services : byState[tab];
   var shown = inTab.filter(function (j) {
     return mgMatches([j.area, j.zone || '', assigneeNames(j)]);
   });
@@ -15208,7 +15208,7 @@ function jobsSection(t) {
   html += '<div class="chips">' +
     [['all', 'All ' + services.length],
      ['active', 'Active ' + byState.active.length],
-     ['done', 'Completed ' + byState.completed.length]].map(function (c) {
+     ['done', 'Done ' + byState.done.length]].map(function (c) {
       return '<button class="chip' + (tab === c[0] ? ' on' : '') + '" data-a="mgJobs" data-x="' + c[0] + '">' + c[1] + '</button>';
     }).join('') + '</div>';
 
@@ -15230,7 +15230,7 @@ function jobsSection(t) {
         '</tr>';
     }), MGMT_Q ? 'No ' + what + ' service matches “' + MGMT_Q + '”'
       : tab === 'active' ? 'No active ' + what + ' services found.'
-      : tab === 'done' ? 'No completed ' + what + ' services found.'
+      : tab === 'done' ? 'No ' + what + ' services are done yet.'
       : 'No ' + what + ' services yet') + '</div>';
 
   html += '<div class="card sm muted" style="margin-top:12px">Double-click any detail — name, area, frequency, schedule, who it is assigned to, or status — to edit it in place. Restaurants opens a picker. ' +
