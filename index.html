@@ -75,8 +75,9 @@ button,input,select,textarea{font:inherit;color:inherit}
   box-shadow:var(--sh);padding:16px 18px;margin-bottom:14px;text-align:left;cursor:pointer}
 .big:active{transform:scale(.985)}
 .big .bi{width:64px;height:64px;border-radius:18px;display:grid;place-items:center;font-size:32px;flex:none}
-.big .bt{font-size:21px;font-weight:800;line-height:1.15;letter-spacing:.2px}
-.big .bs{font-size:14px;color:var(--mut);font-weight:600;margin-top:3px}
+.big .bcol{display:flex;flex-direction:column;gap:3px;min-width:0;flex:1 1 auto;text-align:left}
+.big .bt{display:block;font-size:21px;font-weight:800;line-height:1.15;letter-spacing:.2px}
+.big .bs{display:block;font-size:14px;color:var(--mut);font-weight:600;line-height:1.35}
 .big .bn{margin-left:auto;font-size:30px;font-weight:900;line-height:1;flex:none}
 .step{display:flex;gap:12px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
 .step:last-child{border-bottom:0}
@@ -241,6 +242,10 @@ table.tbl tr:last-child td{border-bottom:0}
   #app{max-width:none;padding:0 0 40px 232px}
   .hdr{padding-left:22px;padding-right:22px}
   .wrap{padding:22px 26px;max-width:1240px}
+  /* The home cards are one column of doors, not a table: past about
+     this width they stop being easier to read and start being harder,
+     with the count stranded from the name it counts. */
+  #app .wrap.home{max-width:760px}
   #tabbar{position:static}
   .tabs{position:fixed;left:0;right:auto;top:0;bottom:0;z-index:70;width:232px;border-top:0;border-right:1px solid var(--line);
     padding:0;background:#0b3d2e;flex-direction:column}
@@ -12802,13 +12807,13 @@ function renderSimpleHome() {
     '<button class="iconbtn rel" data-a="alerts">' + ic('bell') + (unreadAlerts().length ? '<span class="badge">' + unreadAlerts().length + '</span>' : '') + '</button>' +
     '<button class="iconbtn" data-a="me">' + h(initials(ME.name)) + '</button></div></div>';
 
-  html += '<div class="wrap">';
+  html += '<div class="wrap home">';
   /* Each card is the door to one section, so it is only drawn when this
      person's job types reach that section — a card that bounces back to
      Home is worse than no card. */
   var canClean = tabAllowed('clean'), canLab = tabAllowed('lab'), canExp = tabAllowed('exp');
   if (canClean) html += bigBtn('🧽', '#e6f5ee', 'CLEANING', todo.length ? todo.length + ' job' + (todo.length > 1 ? 's' : '') + ' to do' : 'All jobs done ✓', todo.length || '', 'tab', 'clean');
-  if (canLab) html += bigBtn('🏷️', '#fbf6d9', 'LABEL A PRODUCT', 'Take a photo, print the sticker', noLabel || '', 'addProduct', '');
+  if (canLab) html += bigBtn('🏷️', '#fbf6d9', 'LABEL A PRODUCT', 'Name it, set the dates, add a photo', noLabel || '', 'addProduct', '');
   if (canExp) html += bigBtn('📅', '#fdf0e0', 'CHECK EXPIRY', (e.expired + e.soon) ? (e.expired ? e.expired + ' expired' : '') + (e.expired && e.soon ? ' · ' : '') + (e.soon ? e.soon + ' expiring soon' : '') : 'Nothing expiring', (e.expired + e.soon) || '', 'tab', 'exp');
   if (canLab) html += bigBtn('⛶', '#e8f0fd', 'SCAN A LABEL', 'Point the camera at the QR', '', 'scan', '');
 
@@ -12827,7 +12832,7 @@ function renderSimpleHome() {
 function bigBtn(icon, bg, title, sub, n, act, x) {
   return '<button class="big" data-a="' + act + '" data-x="' + x + '">' +
     '<span class="bi" style="background:' + bg + '">' + icon + '</span>' +
-    '<span><span class="bt">' + title + '</span><span class="bs">' + h(sub) + '</span></span>' +
+    '<span class="bcol"><span class="bt">' + title + '</span><span class="bs">' + h(sub) + '</span></span>' +
     (n ? '<span class="bn" style="color:var(--brand)">' + n + '</span>' : '<span class="bn" style="color:#c9cfca">›</span>') + '</button>';
 }
 
