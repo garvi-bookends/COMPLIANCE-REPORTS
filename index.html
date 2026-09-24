@@ -12512,9 +12512,17 @@ var TYPE_TAB = { cleaning: 'clean', labelling: 'lab', labeling: 'lab' };
 function myJobTypes() { return (ME && ME.jobTypes) || []; }
 /* Home and Reports are not job types — one is where the day starts, the other
    where it is reviewed — so neither is ever hidden. */
+/* Where an account lands, and what it falls back to. The Super Admin runs
+   the system rather than working a kitchen, so Management is their home;
+   everyone else starts on the kitchen dashboard. */
+function homeTab() { return (ME && perm().superadmin) ? 'manage' : 'home'; }
 function tabAllowed(tab) {
+  /* The Super Admin has no kitchen tabs at all — no Home, Cleaning, Expiry,
+     Labels or Reports. Their account exists to run the system, and a tab
+     that only ever bounced back is worse than no tab. */
+  if (ME && perm().superadmin) return tab === 'manage';
   if (tab === 'home' || tab === 'rep' || tab === 'manage') return true;
-  if (!ME || perm().superadmin) return true;
+  if (!ME) return true;
   var ids = myJobTypes();
   if (!ids.length) return true;                    /* nothing set = not restricted */
   var gated = {};
@@ -12525,6 +12533,8 @@ function tabAllowed(tab) {
 function tabbar() {
   var items = [['home', 'Home', 'home'], ['clean', 'Cleaning', 'clean'], ['exp', 'Expiry', 'exp'], ['lab', 'Labels', 'lab'], ['rep', 'Reports', 'rep']];
   if (ME.role === 'staff') items = items.slice(0, 4);
+  /* tabAllowed() empties this for the Super Admin, leaving the four
+     management rows below as their whole nav. */
   items = items.filter(function (t) { return tabAllowed(t[0]); });
 
   var nav = items.map(function (t) {
@@ -12636,7 +12646,7 @@ function doLogin() {
     LOGIN_ERR = '';
     LOGIN_UID = '';
     S.loc = ME.loc || 'ALL';
-    S.tab = 'home';
+    S.tab = homeTab();
     ensureJobs();          /* the roster has just arrived, so jobs can be assigned */
     render();              /* router sends them to the password screen if mustChange */
     refreshPendingSignups();
@@ -14653,7 +14663,8 @@ var MGMT_ITEMS = [
 function renderManageHome() {
   var waiting = PENDING_SIGNUPS + RESET_REQUESTS;
   var review = DB ? tasksAwaitingApproval().length : 0;
-  var html = mgHead('MANAGEMENT', 'Super Admin', ['mgmtBack', 'Dashboard']);
+  /* Nothing above this for the Super Admin, so no back button. */
+  var html = mgHead('MANAGEMENT', 'Super Admin', perm().superadmin ? null : ['mgmtBack', 'Dashboard']);
   html += '<div class="card pad0">' + MGMT_ITEMS.map(function (it) {
     var badge = it[0] === 'users' ? waiting : it[0] === 'review' ? review : 0;
     return '<button class="mgmenu-i" data-a="mgmtOpen" data-x="' + it[0] + '">' +
@@ -15693,7 +15704,7 @@ function render() {
   /* A section this account's job types do not cover is not reachable, however
      it was arrived at — a stale tab from the last session, a deep link, an old
      button. The nav hides it; this is what makes it true. */
-  if (!tabAllowed(S.tab)) S.tab = 'home';
+  if (!tabAllowed(S.tab)) S.tab = homeTab();
   /* Being given a job at another kitchen shows that job, not that kitchen's
      products, so the label and expiry screens stay on the home kitchen. */
   if ((S.tab === 'exp' || S.tab === 'lab') && isGuestLoc(S.loc)) S.loc = ME.loc || visibleLocations()[0].id;
@@ -15734,7 +15745,9 @@ document.addEventListener('click', function (ev) {
     case 'doForgot': doForgot(); break;
     case 'superDash': if (!perm().superadmin) break; closeSheet(); superSheet(); break;
     /* Only the nav changes, so redraw just that — no need to rebuild the screen. */
-    case 'mgmtBack': S.tab = 'home'; render(); break;
+    /* For the Super Admin the Dashboard IS Management, so 'back' returns to
+       the list of sections rather than a kitchen screen they cannot open. */
+    case 'mgmtBack': S.tab = homeTab(); if (S.tab === 'manage') S.manage = 'home'; render(); break;
     case 'mgmtOpen': {
       if (!perm().superadmin) break;
       closeSheet();   /* the section stays expanded, so coming back shows it open */
