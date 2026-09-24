@@ -183,18 +183,25 @@ label.f>span{display:block;font-size:12.5px;font-weight:800;color:var(--mut);tex
 body.signedout #app{padding:0;max-width:none}
 .authwrap{min-height:100vh;min-height:100dvh;display:flex;flex-direction:column;justify-content:center;
   align-items:center;padding:28px 16px calc(env(safe-area-inset-bottom) + 28px)}
-.authbox{width:100%;max-width:400px}
-.authbox .card{margin-bottom:12px}
-.authbrand{text-align:center;margin-bottom:20px}
-.authbrand b{display:block;color:var(--brand);font-size:24px;font-weight:800;letter-spacing:2.5px}
-.authbrand span{display:block;color:var(--mut);font-size:11.5px;font-weight:700;letter-spacing:1.4px;margin-top:5px;text-transform:uppercase}
+.authbox{width:100%;max-width:460px}
+/* Roomier than a card in a list: this one is the whole screen, and on a
+   desktop it is the only thing on it. */
+.authbox .card{margin-bottom:14px;padding:20px}
+.authbox .inp{min-height:56px;font-size:16.5px}
+.authbox .btn{min-height:58px;font-size:16.5px}
+.authbox .f>span{font-size:12px}
+.authbrand{text-align:center;margin-bottom:24px}
+.authbrand b{display:block;color:var(--brand);font-size:30px;font-weight:800;letter-spacing:3px}
+.authbrand span{display:block;color:var(--mut);font-size:12px;font-weight:700;letter-spacing:1.5px;margin-top:6px;text-transform:uppercase}
 /* The two secondary actions were a full-width white button each, which read
    as loud as Sign in. They are one quiet row under the card. */
 .authlinks{display:flex;flex-wrap:wrap;justify-content:center;align-items:center;gap:6px 14px;margin:4px 0 2px}
 .authlinks button{background:none;border:0;padding:8px 2px;min-height:44px;font:inherit;font-size:14px;font-weight:700;
   color:var(--brand);cursor:pointer;text-decoration:underline;text-underline-offset:3px}
 .authlinks .sep{color:var(--line)}
-.authnote{font-size:13px;line-height:1.5;color:var(--mut);text-align:center;margin:2px 4px 14px}
+.authbox .autht{font-size:21px;font-weight:800;margin-bottom:3px}
+.authbox .auths{font-size:14px;color:var(--mut);margin-bottom:16px}
+.authnote{font-size:13.5px;line-height:1.55;color:var(--mut);text-align:center;margin:2px 4px 14px}
 .authfoot{font-size:12px;color:var(--mut);text-align:center;margin-top:18px}
 select.inp{appearance:none;background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='%236a7480'><path d='M7 10l5 5 5-5z'/></svg>");background-repeat:no-repeat;background-position:right 14px center}
 .inp:focus{outline:0;border-color:var(--brand2);box-shadow:0 0 0 3px rgba(18,103,76,.12)}
@@ -12584,8 +12591,8 @@ function offlineNote() {
 function renderLogin() {
   authShell(
     '<div class="card">' +
-    '<div class="b" style="font-size:18px;margin-bottom:2px">Sign in</div>' +
-    '<div class="sm muted" style="margin-bottom:14px">Use your own ID and password.</div>' +
+    '<div class="autht">Sign in</div>' +
+    '<div class="auths">Use your own ID and password.</div>' +
     '<label class="f"><span>User ID</span><input class="inp" id="l_uid" value="' + h(LOGIN_UID) + '" placeholder="e.g. rahul" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false"></label>' +
     /* No dot-placeholder: four dots told anyone looking how long the
        starting password is. */
@@ -12656,8 +12663,8 @@ function renderSignup() {
   var dr = SIGNUP_DRAFT;
   authShell(
     '<div class="card">' +
-    '<div class="b" style="font-size:18px;margin-bottom:2px">Create your account</div>' +
-    '<div class="sm muted" style="margin-bottom:14px">Choose your own username and password.</div>' +
+    '<div class="autht">Create your account</div>' +
+    '<div class="auths">Choose your own username and password.</div>' +
     '<label class="f"><span>Your name</span><input class="inp" id="s_name" value="' + h(dr.name) + '" placeholder="e.g. Suresh Patel" autocomplete="name"></label>' +
     '<label class="f"><span>Username</span><input class="inp" id="s_uid" value="' + h(dr.uid) + '" placeholder="e.g. suresh" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false">' +
     '<div class="xs muted" style="margin-top:6px">Lower case letters and numbers only. You will sign in with this.</div></label>' +
@@ -12735,8 +12742,8 @@ var FORGOT_BUSY = false;
 function renderForgot() {
   authShell(
     '<div class="card">' +
-    '<div class="b" style="font-size:18px;margin-bottom:2px">Forgot your password?</div>' +
-    '<div class="sm muted" style="margin-bottom:14px">Enter your username. The Super Admin (Husen) will set a temporary password for you.</div>' +
+    '<div class="autht">Forgot your password?</div>' +
+    '<div class="auths">Enter your username. The Super Admin (Husen) will set a temporary password for you.</div>' +
     '<label class="f"><span>Username</span><input class="inp" id="f_uid" value="' + h(LOGIN_UID) + '" placeholder="e.g. rahul" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false"></label>' +
     (FORGOT_ERR ? '<div class="card" style="background:#fdecea;border-color:#f6c9c4;margin:0 0 12px"><b class="sm">' + h(FORGOT_ERR) + '</b></div>' : '') +
     '<button class="btn" id="f_btn" data-a="doForgot">Ask for a new password</button></div>' +
@@ -12777,8 +12784,8 @@ var PW_ERR = '';
 function renderSetPassword() {
   authShell(
     '<div class="card">' +
-    '<div class="b" style="font-size:18px;margin-bottom:2px">Choose your password</div>' +
-    '<div class="sm muted" style="margin-bottom:14px">' + h(ME.name) + ' · ID ' + h(ME.uid) + '</div>' +
+    '<div class="autht">Choose your password</div>' +
+    '<div class="auths">' + h(ME.name) + ' · ID ' + h(ME.uid) + '</div>' +
     '<label class="f"><span>New password</span><input class="inp" id="p_new" type="password" placeholder="At least ' + MIN_PW_LEN + ' characters" autocomplete="new-password"></label>' +
     '<label class="f"><span>Type it again</span><input class="inp" id="p_new2" type="password" autocomplete="new-password"></label>' +
     (PW_ERR ? '<div class="card" style="background:#fdecea;border-color:#f6c9c4;margin:0 0 12px"><b class="sm">' + h(PW_ERR) + '</b></div>' : '') +
