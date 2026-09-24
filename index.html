@@ -14513,8 +14513,9 @@ var MGMT_ERR = '';
 var MGMT_BUSY = false;
 var MGMT_Q = '';                // search text, shared by both screens
 var MGMT_FILTER = 'all';
-/* Job Management: the work under a job type, active or finished with. */
-var MGMT_JOBS = 'active';
+/* Job Management: the work under a job type — all of it, or just what is
+   still active, or just what has been signed off. */
+var MGMT_JOBS = 'all';
 /* A job is live work until it has been approved. Sent in and waiting is still
    live — somebody has to look at it; rejected is still live — it has to be
    done again. Only an approval closes it, and only the Super Admin can
@@ -15220,12 +15221,17 @@ function jobsSection(t) {
      history and does not depend on the schedule still existing. */
   var active = all.filter(function (x) { return !jobFinished(x) && taskLive(x); });
   var done = all.filter(jobFinished);
-  var list = MGMT_JOBS === 'done' ? done : active;
+  /* All is Active and Completed together, not everything jobsOfType() holds:
+     the work of a deleted service is in neither chip, and All must not be the
+     one place it reappears. Task Review is where that record lives. */
+  var shownAll = active.concat(done);
+  var list = MGMT_JOBS === 'done' ? done : MGMT_JOBS === 'all' ? shownAll : active;
 
   /* Named, because the services table sits on the same page. */
-  var html = '<div id="mg_jobs"><div class="sec-t">Jobs · ' + list.length + '</div>';
+  var html = '<div id="mg_jobs"><div class="sec-t">Jobs · ' + list.length +
+    (list.length !== shownAll.length ? ' of ' + shownAll.length : '') + '</div>';
   html += '<div class="chips">' +
-    [['active', 'Active ' + active.length], ['done', 'Completed ' + done.length]].map(function (c) {
+    [['all', 'All ' + shownAll.length], ['active', 'Active ' + active.length], ['done', 'Completed ' + done.length]].map(function (c) {
       return '<button class="chip' + (MGMT_JOBS === c[0] ? ' on' : '') + '" data-a="mgJobs" data-x="' + c[0] + '">' + c[1] + '</button>';
     }).join('') + '</div>';
 
@@ -15241,7 +15247,9 @@ function jobsSection(t) {
           (jobFinished(x) && x.approvedAt ? '<div class="xs muted">' + h(uname(x.approvedBy)) + ' · ' + h(fmtD(ymd(new Date(x.approvedAt)))) + '</div>' : '') +
           (x.status === 'rejected' && x.reject ? '<div class="xs" style="color:var(--red)">' + h(x.reject) + '</div>' : '') +
         '</td></tr>';
-    }), MGMT_JOBS === 'done' ? 'Nothing has been approved yet' : 'No live work under this job type');
+    }), MGMT_JOBS === 'done' ? 'Nothing has been approved yet'
+     : MGMT_JOBS === 'all' ? 'No work under this job type yet'
+     : 'No live work under this job type');
 
   if (list.length > 60) {
     html += '<div class="card sm muted center">Showing the first 60 of ' + list.length + '</div>';
