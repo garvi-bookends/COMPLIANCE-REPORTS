@@ -72,6 +72,15 @@ router.get('/:kind', asyncHandler(function (req, res) {
   var params = [since.toISOString(), after, PAGE + 1];
   var scope = '';
   if (!all) { params.push(req.auth.loc); scope = ' and loc = $4'; }
+  /* Kitchen Staff get the labels they entered and no others. The screen
+     filters too, but this is the line that matters: without it every
+     product in the kitchen sits on their device, one export away. Cleaning
+     is untouched — a kitchen's jobs are shared work, handed out by the
+     Super Admin, and a job nobody could see is a job nobody does. */
+  if (req.params.kind === 'products' && req.auth.role === 'staff') {
+    params.push(req.auth.id);
+    scope += " and data->>'by' = $" + params.length;
+  }
 
   return db.query(
     'select id, updated_at, data, (now() - ' + OVERLAP + ') as cursor from ' + table +

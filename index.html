@@ -11440,13 +11440,22 @@ function cleaningStatsRange(loc, from, to, freq) {
 }
 /* 'ALL' is a real answer here, not a stand-in for a kitchen nobody picked:
    an account that sees every kitchen gets every kitchen's stock. */
+/* Kitchen Staff see the labels they entered, and nobody else's. Everyone
+   above them — the Location Manager for their kitchen, and every role that
+   sees all kitchens — sees the lot, because checking what other people put
+   in the fridge is the job.
+
+   The server holds the same line and does not send a staff account anyone
+   else's rows, so this is the screen agreeing with the data, not hiding it. */
+function ownLabelsOnly() { return !!(ME && ME.role === 'staff'); }
+function mineToSee(p) { return !ownLabelsOnly() || p.by === ME.id; }
 function productsFor(loc) {
   if (loc === 'ALL') {
     var seen = {};
     visibleLocations().forEach(function (L) { seen[L.id] = 1; });
-    return DB.products.filter(function (p) { return seen[p.loc]; });
+    return DB.products.filter(function (p) { return seen[p.loc] && mineToSee(p); });
   }
-  return DB.products.filter(function (p) { return p.loc === loc; });
+  return DB.products.filter(function (p) { return p.loc === loc && mineToSee(p); });
 }
 function expiryStats(loc) {
   /* An Inactive label is stock that has been withdrawn. It stays on the lists
