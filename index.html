@@ -15208,6 +15208,28 @@ function serviceState(j) {
   if (!j.enabled) return 'off';
   return serviceHasLiveWork(j.tk) ? 'active' : 'completed';
 }
+/* Job Management: which jobs the list under a job type is showing. */
+var MGMT_JOBS = 'all';
+/* The schedule the job came from, for the Service column: how often it runs
+   and on which day. The job itself only carries a date, so this is the one
+   place the list says what raised it. */
+function jobServiceLine(x) {
+  var j = jobFor(tkeyOf(x));
+  if (!j) return '<span class="muted">—</span>';
+  var out = h(freqLabel(j.freq));
+  if (j.freq === 'W') out += '<div class="xs muted">' + h(j.day == null ? 'Spread across the week' : 'Every ' + DAY_NAMES[j.day]) + '</div>';
+  else if (j.freq === 'M') out += '<div class="xs muted">Once a month</div>';
+  return out;
+}
+/* When it was meant to happen, and when it actually did. A service with no
+   set time has nothing to show for the first, and a job nobody has sent in
+   has nothing to show for the second. */
+function jobTimeCell(x) {
+  /* A dash would read as missing data. A service with no set time genuinely
+     runs at any time in the day, which is worth saying. */
+  return (x.time ? h(fmtTime(x.time)) : '<span class="muted">Any time</span>') +
+    (x.completedAt ? '<div class="xs muted">sent in ' + h(fmtClock(x.completedAt)) + '</div>' : '');
+}
 function jobsSection(t) {
   var all = jobsOfType(t.id);
   /* Active is work somebody is still expected to do, so it takes only jobs
@@ -15218,41 +15240,51 @@ function jobsSection(t) {
      history and does not depend on the schedule still existing. */
   var active = all.filter(function (x) { return !jobFinished(x) && taskLive(x); });
   var done = all.filter(jobFinished);
-  /* One list, no chips. It is Active and Completed together, not everything
-     jobsOfType() holds: the unfinished work of a deleted service belongs to
-     neither, and this list must not be the one place it reappears. Task
-     Review is where that record lives. Each row carries its own status, so
-     the list says which is which without splitting in three.
 
-     Built by filtering jobsOfType()'s order rather than by joining the two
-     groups end to end. Concatenating put every approved job after every
-     active one, so on a busy job type the 60-row cap cut all of them off and
-     the list never showed a single DONE. This keeps one order — whatever is
-     waiting on somebody first, then by the day it is due — so the cap takes
-     the least urgent rows, whichever kind they are. */
-  var keep = {};
-  active.forEach(function (x) { keep[x.id] = 1; });
-  done.forEach(function (x) { keep[x.id] = 1; });
-  var list = all.filter(function (x) { return keep[x.id]; });
+  /* All is Active and Completed together, and nothing else. The unfinished
+     work of a deleted service belongs to neither, and All must not be the one
+     place it comes back — Task Review is where that record lives.
+
+     Each tab filters jobsOfType()'s order rather than joining groups end to
+     end: concatenating put every approved job after every active one, so on a
+     busy job type the 60-row cap cut all of them off and All never showed a
+     single DONE. One order — whatever is waiting on somebody first, then by
+     the day it is due — means the cap takes the least urgent rows. */
+  var inTab = {};
+  (MGMT_JOBS === 'active' ? active : MGMT_JOBS === 'done' ? done : active.concat(done))
+    .forEach(function (x) { inTab[x.id] = 1; });
+  var list = all.filter(function (x) { return inTab[x.id]; });
 
   /* Named, because the services table sits on the same page. */
   var html = '<div id="mg_jobs"><div class="sec-t">Jobs · ' + list.length + '</div>';
+  html += '<div class="chips">' +
+    [['all', 'All ' + (active.length + done.length)],
+     ['active', 'Active ' + active.length],
+     ['done', 'Completed ' + done.length]].map(function (c) {
+      return '<button class="chip' + (MGMT_JOBS === c[0] ? ' on' : '') + '" data-a="mgJobs" data-x="' + c[0] + '">' + c[1] + '</button>';
+    }).join('') + '</div>';
 
-  html += mgTable(['Job', 'Kitchen', 'Assigned to', 'Due', 'Status'],
+  html += mgTable(['Job', 'Service', 'Kitchen', 'Assigned to', 'Date', 'Time', 'Status'],
     list.slice(0, 60).map(function (x) {
       return '<tr>' +
         '<td><button class="linkish b" data-a="task" data-x="' + h(x.id) + '">' + h(cleanName(x)) + '</button>' +
           (x.zone ? '<div class="xs muted">' + h(x.zone) + '</div>' : '') + '</td>' +
+        '<td class="sm">' + jobServiceLine(x) + '</td>' +
         '<td class="sm">' + h(lname(x.loc)) + '</td>' +
         '<td class="sm">' + h(shortAssignees(x)) + '</td>' +
         '<td class="sm">' + h(fmtD(x.due)) + '</td>' +
-        '<td>' + statusPill(x) +
-          (jobFinished(x) && x.approvedAt ? '<div class="xs muted">' + h(uname(x.approvedBy)) + ' · ' + h(fmtD(ymd(new Date(x.approvedAt)))) + '</div>' : '') +
-          (x.status === 'rejected' && x.reject ? '<div class="xs" style="color:var(--red)">' + h(x.reject) + '</div>' : '') +
-        '</td></tr>';
-    }), /* Named after the job type, so the sentence is about what the person
-           is actually looking at: "No cleaning jobs found." */
-       'No ' + String(t.name || 'cleaning').toLowerCase() + ' jobs found.');
+        '<td class="sm">' + jobTimeCell(x) + '</td>' +
+        /* The pill, then who decided and when — the same line the cleaning
+           screens use, so one job reads the same wherever it is seen. */
+        '<td>' + statusPill(x) + decisionLine(x) + '</td>' +
+        '</tr>';
+    }), /* Named after the job type and the tab, so the sentence is about what
+           the person is actually looking at. */
+       (function (what) {
+         return MGMT_JOBS === 'active' ? 'No active ' + what + ' jobs found.'
+              : MGMT_JOBS === 'done' ? 'No completed ' + what + ' jobs found.'
+              : 'No ' + what + ' jobs found.';
+       })(String(t.name || 'cleaning').toLowerCase()));
 
   if (list.length > 60) {
     html += '<div class="card sm muted center">Showing the first 60 of ' + list.length + '</div>';
@@ -15663,6 +15695,7 @@ document.addEventListener('click', function (ev) {
       break;
     }
     case 'mgmtJobsBack': S.manage = 'jobs'; MGMT_Q = ''; MGMT_FILTER = 'all'; render(); break;
+    case 'mgJobs': MGMT_JOBS = x; render(); break;
     case 'mgFilter': MGMT_FILTER = x; render(); break;
     case 'openType': if (!perm().superadmin) break; S.manage = 'type'; S.manageType = x; MGMT_Q = ''; MGMT_FILTER = 'all'; render(); break;
     case 'addJobType': if (!perm().superadmin) break; JOBT_ERR = ''; closeSheet(); jobTypeForm(null); break;
