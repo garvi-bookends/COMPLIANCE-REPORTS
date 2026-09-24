@@ -15111,57 +15111,10 @@ function renderTypeServices() {
     html += '<div class="card sm" style="background:#fdecea;border-color:#f6c9c4;margin-top:12px"><b>This job type is switched off.</b> ' +
       'Its services are not scheduled.</div>';
   }
-  /* The work first, the setup under it. What was done and what is still
-     owed is what this page is opened for day to day; the list of services
-     that generate it is changed far less often. */
+  /* Everything below is one tabbed section: the services under All, the
+     work they raised under Active and Completed. */
   html += jobsSection(t);
 
-  html += '<button class="btn ok" data-a="addJob" data-x="' + h(t.id) + '" style="margin-top:12px">＋ Add Service</button>';
-  html += mgSearchBox(MGMT_Q, 'Service name or area');
-
-  /* The search box is the only thing that narrows this table. It has had
-     chips over it twice — once for how many restaurants a service runs at,
-     once for whether its work was finished — and both times they split the
-     list on something the table already says per row, in the Restaurants and
-     Status columns. The Assigned To column names who has each service, and
-     the search matches a person's name as well as the service and the area,
-     so one box covers all three. */
-  var shown = list.filter(function (j) {
-    return mgMatches([j.area, j.zone || '', assigneeNames(j)]);
-  });
-  html += '<div class="sec-t">Services · ' + shown.length +
-    (shown.length !== list.length ? ' of ' + list.length : '') + '</div>';
-  html += '<div id="mg_services">' + mgTable(['Name', 'Area', 'Frequency', 'Restaurants', 'Assigned To', 'Status', 'Actions'],
-    shown.map(function (j) {
-      /* Every detail is editable in place — same mechanism for all of them. */
-      return '<tr>' +
-        '<td>' + cellEdit(j.tk, 'name', j.area, 'b') + (j.custom ? '<div class="xs muted">added</div>' : '') + '</td>' +
-        '<td class="sm">' + cellEdit(j.tk, 'zone', j.zone, 'muted') + '</td>' +
-        '<td class="sm">' + cellEdit(j.tk, 'freq', freqLabel(j.freq)) +
-          (j.freq === 'W' ? '<div class="xs muted">' + cellEdit(j.tk, 'day', j.day == null ? 'Spread across the week' : 'Every ' + DAY_NAMES[j.day]) + '</div>' : '') + '</td>' +
-        '<td class="sm">' + locCell(j) + '</td>' +
-        '<td class="sm">' + peopleCell(j) + '</td>' +
-        '<td>' + (function () {
-          /* A service is ACTIVE while it has work nobody has signed off yet,
-             and COMPLETED once the last of it is approved — so the column
-             answers "is anything outstanding here?" rather than "is this
-             switched on?" The two are not the same, so the line underneath
-             says which. */
-          var PILL = { deleted: ['DELETED', 'p-red', ''],
-                       off: ['OFF', 'p-org', 'switched off'],
-                       active: ['ACTIVE', 'p-grn', ''],
-                       completed: ['COMPLETED', 'p-blu', 'all work approved'] };
-          var p = PILL[serviceState(j)];
-          var lbl = p[0], cls = p[1], note = p[2];
-          return (canManageClean() ? cellEdit(j.tk, 'status', lbl, 'pill ' + cls) : pill(lbl, cls)) +
-            (note ? '<div class="xs muted">' + note + '</div>' : '');
-        })() + '</td>' +
-        '<td class="nowrap">' + mgBtn('deleteClean', j.tk, '✕', 'Delete service', 'background:#f6e7e5;color:var(--red)') + '</td>' +
-        '</tr>';
-    }), 'No services under this job type yet') + '</div>';
-
-  html += '<div class="card sm muted" style="margin-top:12px">Double-click any detail — name, area, frequency, schedule, who it is assigned to, or status — to edit it in place. Restaurants opens a picker. ' +
-    'Enter saves, Escape cancels.</div>';
   $('#app').innerHTML = html + '<div style="height:20px"></div></div>';
   mgWireSearch(renderTypeServices);
 }
@@ -15203,6 +15156,24 @@ function serviceHasLiveWork(tk) {
    A switched-off service is neither active nor completed, so the two chips do
    not have to add up to All. Counting it as either would be a lie: it is not
    waiting on anyone, and nothing was finished. */
+/* The Status cell for a service. Two places draw a service now — the setup
+   table, where the Super Admin edits it, and the All tab above it, which only
+   lists — so the pill lives here and both read the same one.
+
+   A service is ACTIVE while it has work nobody has signed off yet, and
+   COMPLETED once the last of it is approved, so the column answers "is
+   anything outstanding here?" rather than "is this switched on?" The two are
+   not the same, so the line underneath says which. */
+var SERVICE_PILL = { deleted: ['DELETED', 'p-red', ''],
+                     off: ['OFF', 'p-org', 'switched off'],
+                     active: ['ACTIVE', 'p-grn', ''],
+                     completed: ['COMPLETED', 'p-blu', 'all work approved'] };
+function serviceStatusCell(j, editable) {
+  var p = SERVICE_PILL[serviceState(j)];
+  var lbl = p[0], cls = p[1], note = p[2];
+  return ((editable && canManageClean()) ? cellEdit(j.tk, 'status', lbl, 'pill ' + cls) : pill(lbl, cls)) +
+    (note ? '<div class="xs muted">' + note + '</div>' : '');
+}
 function serviceState(j) {
   if (j.stopped) return 'deleted';
   if (!j.enabled) return 'off';
@@ -15240,29 +15211,61 @@ function jobsSection(t) {
      history and does not depend on the schedule still existing. */
   var active = all.filter(function (x) { return !jobFinished(x) && taskLive(x); });
   var done = all.filter(jobFinished);
+  /* All answers a different question from the other two. Active and Completed
+     are about work — what is owed, what was signed off. All is the setup:
+     every service under this job type, whether or not it has raised any work
+     yet. It is the only services table on the page; there was a second one
+     under it saying exactly the same thing, which is now gone. */
+  var services = allServicesOfType(t.id).filter(function (j) { return !j.stopped; });
+  var tab = MGMT_JOBS === 'active' || MGMT_JOBS === 'done' ? MGMT_JOBS : 'all';
+  var what = String(t.name || 'cleaning').toLowerCase();
 
-  /* All is Active and Completed together, and nothing else. The unfinished
-     work of a deleted service belongs to neither, and All must not be the one
-     place it comes back — Task Review is where that record lives.
+  var shown = tab === 'all' ? services.filter(function (j) {
+    return mgMatches([j.area, j.zone || '', assigneeNames(j)]);
+  }) : [];
 
-     Each tab filters jobsOfType()'s order rather than joining groups end to
-     end: concatenating put every approved job after every active one, so on a
-     busy job type the 60-row cap cut all of them off and All never showed a
-     single DONE. One order — whatever is waiting on somebody first, then by
-     the day it is due — means the cap takes the least urgent rows. */
-  var inTab = {};
-  (MGMT_JOBS === 'active' ? active : MGMT_JOBS === 'done' ? done : active.concat(done))
-    .forEach(function (x) { inTab[x.id] = 1; });
-  var list = all.filter(function (x) { return inTab[x.id]; });
-
-  /* Named, because the services table sits on the same page. */
-  var html = '<div id="mg_jobs"><div class="sec-t">Jobs · ' + list.length + '</div>';
+  /* Named, because more than one table has lived on this page. */
+  var html = '<div id="mg_jobs"><div class="sec-t">' +
+    (tab === 'all' ? 'Services · ' + shown.length + (shown.length !== services.length ? ' of ' + services.length : '')
+                   : 'Jobs · ' + (tab === 'active' ? active.length : done.length)) + '</div>';
   html += '<div class="chips">' +
-    [['all', 'All ' + (active.length + done.length)],
+    [['all', 'All ' + services.length],
      ['active', 'Active ' + active.length],
      ['done', 'Completed ' + done.length]].map(function (c) {
-      return '<button class="chip' + (MGMT_JOBS === c[0] ? ' on' : '') + '" data-a="mgJobs" data-x="' + c[0] + '">' + c[1] + '</button>';
+      return '<button class="chip' + (tab === c[0] ? ' on' : '') + '" data-a="mgJobs" data-x="' + c[0] + '">' + c[1] + '</button>';
     }).join('') + '</div>';
+
+  if (tab === 'all') {
+    html += '<button class="btn ok" data-a="addJob" data-x="' + h(t.id) + '" style="margin-top:12px">＋ Add Service</button>';
+    /* The search box belongs to this table, so it is drawn with it and is
+       not on screen under the two tabs it cannot narrow. */
+    html += mgSearchBox(MGMT_Q, 'Service name or area');
+    html += '<div id="mg_services">' + mgTable(['Name', 'Area', 'Frequency', 'Restaurants', 'Assigned To', 'Status', 'Actions'],
+      shown.map(function (j) {
+        /* Every detail is editable in place — same mechanism for all of them. */
+        return '<tr>' +
+          '<td>' + cellEdit(j.tk, 'name', j.area, 'b') + (j.custom ? '<div class="xs muted">added</div>' : '') + '</td>' +
+          '<td class="sm">' + cellEdit(j.tk, 'zone', j.zone, 'muted') + '</td>' +
+          '<td class="sm">' + cellEdit(j.tk, 'freq', freqLabel(j.freq)) +
+            (j.freq === 'W' ? '<div class="xs muted">' + cellEdit(j.tk, 'day', j.day == null ? 'Spread across the week' : 'Every ' + DAY_NAMES[j.day]) + '</div>' : '') + '</td>' +
+          '<td class="sm">' + locCell(j) + '</td>' +
+          '<td class="sm">' + peopleCell(j) + '</td>' +
+          '<td>' + serviceStatusCell(j, true) + '</td>' +
+          '<td class="nowrap">' + mgBtn('deleteClean', j.tk, '✕', 'Delete service', 'background:#f6e7e5;color:var(--red)') + '</td>' +
+          '</tr>';
+      }), MGMT_Q ? 'No ' + what + ' service matches “' + MGMT_Q + '”' : 'No ' + what + ' services yet') + '</div>';
+    html += '<div class="card sm muted" style="margin-top:12px">Double-click any detail — name, area, frequency, schedule, who it is assigned to, or status — to edit it in place. Restaurants opens a picker. ' +
+      'Enter saves, Escape cancels.</div>';
+    return html + '</div>';
+  }
+
+  /* Active and Completed: the work itself. Each tab filters jobsOfType()'s
+     order rather than taking its group whole, so the 60-row cap takes the
+     least urgent rows — whatever is waiting on somebody comes first, then by
+     the day it is due. */
+  var inTab = {};
+  (tab === 'active' ? active : done).forEach(function (x) { inTab[x.id] = 1; });
+  var list = all.filter(function (x) { return inTab[x.id]; });
 
   html += mgTable(['Job', 'Service', 'Kitchen', 'Assigned to', 'Date', 'Time', 'Status'],
     list.slice(0, 60).map(function (x) {
@@ -15278,13 +15281,7 @@ function jobsSection(t) {
            screens use, so one job reads the same wherever it is seen. */
         '<td>' + statusPill(x) + decisionLine(x) + '</td>' +
         '</tr>';
-    }), /* Named after the job type and the tab, so the sentence is about what
-           the person is actually looking at. */
-       (function (what) {
-         return MGMT_JOBS === 'active' ? 'No active ' + what + ' jobs found.'
-              : MGMT_JOBS === 'done' ? 'No completed ' + what + ' jobs found.'
-              : 'No ' + what + ' jobs found.';
-       })(String(t.name || 'cleaning').toLowerCase()));
+    }), tab === 'active' ? 'No active ' + what + ' jobs found.' : 'No completed ' + what + ' jobs found.');
 
   if (list.length > 60) {
     html += '<div class="card sm muted center">Showing the first 60 of ' + list.length + '</div>';
