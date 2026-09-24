@@ -14513,9 +14513,6 @@ var MGMT_ERR = '';
 var MGMT_BUSY = false;
 var MGMT_Q = '';                // search text, shared by both screens
 var MGMT_FILTER = 'all';
-/* Job Management: the work under a job type — all of it, or just what is
-   still active, or just what has been signed off. */
-var MGMT_JOBS = 'all';
 /* A job is live work until it has been approved. Sent in and waiting is still
    live — somebody has to look at it; rejected is still live — it has to be
    done again. Only an approval closes it, and only the Super Admin can
@@ -15221,19 +15218,25 @@ function jobsSection(t) {
      history and does not depend on the schedule still existing. */
   var active = all.filter(function (x) { return !jobFinished(x) && taskLive(x); });
   var done = all.filter(jobFinished);
-  /* All is Active and Completed together, not everything jobsOfType() holds:
-     the work of a deleted service is in neither chip, and All must not be the
-     one place it reappears. Task Review is where that record lives. */
-  var shownAll = active.concat(done);
-  var list = MGMT_JOBS === 'done' ? done : MGMT_JOBS === 'all' ? shownAll : active;
+  /* One list, no chips. It is Active and Completed together, not everything
+     jobsOfType() holds: the unfinished work of a deleted service belongs to
+     neither, and this list must not be the one place it reappears. Task
+     Review is where that record lives. Each row carries its own status, so
+     the list says which is which without splitting in three.
+
+     Built by filtering jobsOfType()'s order rather than by joining the two
+     groups end to end. Concatenating put every approved job after every
+     active one, so on a busy job type the 60-row cap cut all of them off and
+     the list never showed a single DONE. This keeps one order — whatever is
+     waiting on somebody first, then by the day it is due — so the cap takes
+     the least urgent rows, whichever kind they are. */
+  var keep = {};
+  active.forEach(function (x) { keep[x.id] = 1; });
+  done.forEach(function (x) { keep[x.id] = 1; });
+  var list = all.filter(function (x) { return keep[x.id]; });
 
   /* Named, because the services table sits on the same page. */
-  var html = '<div id="mg_jobs"><div class="sec-t">Jobs · ' + list.length +
-    (list.length !== shownAll.length ? ' of ' + shownAll.length : '') + '</div>';
-  html += '<div class="chips">' +
-    [['all', 'All ' + shownAll.length], ['active', 'Active ' + active.length], ['done', 'Completed ' + done.length]].map(function (c) {
-      return '<button class="chip' + (MGMT_JOBS === c[0] ? ' on' : '') + '" data-a="mgJobs" data-x="' + c[0] + '">' + c[1] + '</button>';
-    }).join('') + '</div>';
+  var html = '<div id="mg_jobs"><div class="sec-t">Jobs · ' + list.length + '</div>';
 
   html += mgTable(['Job', 'Kitchen', 'Assigned to', 'Due', 'Status'],
     list.slice(0, 60).map(function (x) {
@@ -15248,14 +15251,8 @@ function jobsSection(t) {
           (x.status === 'rejected' && x.reject ? '<div class="xs" style="color:var(--red)">' + h(x.reject) + '</div>' : '') +
         '</td></tr>';
     }), /* Named after the job type, so the sentence is about what the person
-           is actually looking at: "No active cleaning jobs found." The list
-           is empty for a different reason under each chip, and saying which
-           is the difference between "there is none" and "this is broken". */
-       (function (what) {
-         return MGMT_JOBS === 'done' ? 'No completed ' + what + ' jobs found.'
-              : MGMT_JOBS === 'active' ? 'No active ' + what + ' jobs found.'
-              : 'No ' + what + ' jobs found.';
-       })(String(t.name || 'cleaning').toLowerCase()));
+           is actually looking at: "No cleaning jobs found." */
+       'No ' + String(t.name || 'cleaning').toLowerCase() + ' jobs found.');
 
   if (list.length > 60) {
     html += '<div class="card sm muted center">Showing the first 60 of ' + list.length + '</div>';
@@ -15667,7 +15664,6 @@ document.addEventListener('click', function (ev) {
     }
     case 'mgmtJobsBack': S.manage = 'jobs'; MGMT_Q = ''; MGMT_FILTER = 'all'; render(); break;
     case 'mgFilter': MGMT_FILTER = x; render(); break;
-    case 'mgJobs': MGMT_JOBS = x; render(); break;
     case 'openType': if (!perm().superadmin) break; S.manage = 'type'; S.manageType = x; MGMT_Q = ''; MGMT_FILTER = 'all'; render(); break;
     case 'addJobType': if (!perm().superadmin) break; JOBT_ERR = ''; closeSheet(); jobTypeForm(null); break;
     case 'editJobType': if (!perm().superadmin) break; JOBT_ERR = ''; closeSheet(); jobTypeForm(x); break;
