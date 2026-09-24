@@ -15180,33 +15180,75 @@ function serviceState(j) {
 }
 /* Job Management: which of the three service tabs is open. */
 var MGMT_JOBS = 'all';
-function jobsSection(t) {
-  /* All three tabs list services. Which tab a service is under is decided by
-     its own status, the one the Status column shows:
+/* A One Time job is a task with no service behind it: the Add Service form
+   writes it straight into the work, with no checklist row and no slot, so
+   nothing about the recurring schedule is touched. That also means it is not
+   in allServicesOfType(), and it used to fall off this page altogether —
+   raised, done, approved, and never listed here either way.
 
-       All        every service under this job type
+   It is listed in its own right instead. There is no schedule to be switched
+   on or off, so it is simply ACTIVE until it is approved and DONE after. */
+function oneTimeJobsOfType(typeId) {
+  return DB.tasks.filter(function (t) {
+    return taskJobType(t) === typeId && !jobFor(tkeyOf(t));
+  }).sort(function (a, b) { return (a.due || '') < (b.due || '') ? -1 : 1; });
+}
+function oneTimeState(t) { return jobFinished(t) ? 'done' : 'active'; }
+/* Its row, shaped like a service's so the table reads straight down. Nothing
+   is editable in place — there is no checklist row to edit — so the name
+   opens the job itself, which is where a one-off is changed. */
+function oneTimeRow(t) {
+  var st = oneTimeState(t);
+  var p = SERVICE_PILL[st];
+  var word = statusPill(t).replace(/<[^>]*>/g, '');
+  return '<tr>' +
+    '<td><button class="linkish b" data-a="task" data-x="' + h(t.id) + '">' + h(cleanName(t)) + '</button>' +
+      '<div class="xs muted">one-off job</div></td>' +
+    '<td class="sm muted">' + h(t.zone || '—') + '</td>' +
+    '<td class="sm">One time<div class="xs muted">' + h(fmtD(t.due)) +
+      (t.time ? ' · ' + h(fmtTime(t.time)) : '') + '</div></td>' +
+    '<td class="sm">' + h(lname(t.loc)) + '</td>' +
+    '<td class="sm" title="' + h(assigneeNames(t)) + '">' +
+      h(assigneesOf(t).length ? shortAssignees(t) : 'Anyone on shift') + '</td>' +
+    '<td>' + pill(p[0], p[1]) +
+      (word && word !== p[0] ? '<div class="xs muted">' + h(word.toLowerCase()) + '</div>' : '') + '</td>' +
+    '<td class="nowrap"></td>' +
+    '</tr>';
+}
+function jobsSection(t) {
+  /* All three tabs list the things this job type is made of: its services,
+     and any one-off job raised under it. Which tab something is under is its
+     own status, the one the Status column shows:
+
+       All        everything under this job type
        Active     it has work outstanding
        Done       every job it has raised is approved
 
      A service nobody has switched on has no work either way, so it is under
-     All alone — counting it active or completed would be a lie about both.
-     That is why the three counts need not add up. */
+     All alone — counting it active or done would be a lie about both. That
+     is why the three counts need not add up. */
   var services = allServicesOfType(t.id).filter(function (j) { return !j.stopped; });
+  var oneOffs = oneTimeJobsOfType(t.id);
   var byState = { deleted: [], off: [], active: [], done: [] };
-  services.forEach(function (j) { byState[serviceState(j)].push(j); });
+  services.forEach(function (j) { byState[serviceState(j)].push({ svc: j }); });
+  oneOffs.forEach(function (x) { byState[oneTimeState(x)].push({ job: x }); });
 
+  var everything = services.map(function (j) { return { svc: j }; })
+    .concat(oneOffs.map(function (x) { return { job: x }; }));
   var tab = MGMT_JOBS === 'active' || MGMT_JOBS === 'done' ? MGMT_JOBS : 'all';
   var what = String(t.name || 'cleaning').toLowerCase();
-  var inTab = tab === 'all' ? services : byState[tab];
-  var shown = inTab.filter(function (j) {
-    return mgMatches([j.area, j.zone || '', assigneeNames(j)]);
+  var inTab = tab === 'all' ? everything : byState[tab];
+  var shown = inTab.filter(function (e) {
+    return e.svc ? mgMatches([e.svc.area, e.svc.zone || '', assigneeNames(e.svc)])
+                 : mgMatches([cleanName(e.job), e.job.zone || '', assigneeNames(e.job)]);
   });
 
   /* Named, because more than one table has lived on this page. */
-  var html = '<div id="mg_jobs"><div class="sec-t">Services · ' + shown.length +
-    (shown.length !== services.length ? ' of ' + services.length : '') + '</div>';
+  var html = '<div id="mg_jobs"><div class="sec-t">' +
+    (oneOffs.length ? 'Services & jobs · ' : 'Services · ') + shown.length +
+    (shown.length !== everything.length ? ' of ' + everything.length : '') + '</div>';
   html += '<div class="chips">' +
-    [['all', 'All ' + services.length],
+    [['all', 'All ' + everything.length],
      ['active', 'Active ' + byState.active.length],
      ['done', 'Done ' + byState.done.length]].map(function (c) {
       return '<button class="chip' + (tab === c[0] ? ' on' : '') + '" data-a="mgJobs" data-x="' + c[0] + '">' + c[1] + '</button>';
@@ -15216,7 +15258,9 @@ function jobsSection(t) {
   html += mgSearchBox(MGMT_Q, 'Service name or area');
 
   html += '<div id="mg_services">' + mgTable(['Name', 'Area', 'Frequency', 'Restaurants', 'Assigned To', 'Status', 'Actions'],
-    shown.map(function (j) {
+    shown.map(function (e) {
+      if (e.job) return oneTimeRow(e.job);
+      var j = e.svc;
       /* Every detail is editable in place — same mechanism for all of them. */
       return '<tr>' +
         '<td>' + cellEdit(j.tk, 'name', j.area, 'b') + (j.custom ? '<div class="xs muted">added</div>' : '') + '</td>' +
@@ -15234,7 +15278,8 @@ function jobsSection(t) {
       : 'No ' + what + ' services yet') + '</div>';
 
   html += '<div class="card sm muted" style="margin-top:12px">Double-click any detail — name, area, frequency, schedule, who it is assigned to, or status — to edit it in place. Restaurants opens a picker. ' +
-    'Enter saves, Escape cancels.</div>';
+    'Enter saves, Escape cancels.' +
+    (oneOffs.length ? ' A one-off job has no schedule to edit; tap its name to open the job.' : '') + '</div>';
   return html + '</div>';
 }
 
