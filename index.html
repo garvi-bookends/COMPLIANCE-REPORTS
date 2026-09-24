@@ -12410,10 +12410,16 @@ function ring(pct, size, stroke, light) {
 }
 function bar(pct, color) { return '<div class="bar"><i style="width:' + pct + '%;background:' + (color || scoreColor(pct)) + '"></i></div>'; }
 function pill(txt, cls) { return '<span class="pill ' + cls + '">' + h(txt) + '</span>'; }
+/* Past its day and still nobody has done it. Only work that has not been
+   sent in can be overdue: once it is with the Super Admin, or has come back
+   for rework, the date it was due is no longer the thing to say about it. */
+function jobOverdue(t) {
+  return t.status === 'pending' && daysBetween(ymd(today()), t.due) < 0;
+}
 function statusPill(t) {
   if (t.status === 'rejected') return pill('REJECTED', 'p-red');
   if (t.status === 'completed') return t.approved ? pill('DONE', 'p-grn') : pill('PENDING APPROVAL', 'p-blu');
-  return daysBetween(ymd(today()), t.due) < 0 ? pill('OVERDUE', 'p-org') : pill('PENDING', 'p-gry');
+  return jobOverdue(t) ? pill('OVERDUE', 'p-org') : pill('PENDING', 'p-gry');
 }
 function ic(name) {
   var p = {
@@ -15209,7 +15215,13 @@ function jobsSection(t) {
      it stays in Task Review, which is the record of what was sent in.
      Completed keeps everything approved, deleted service or not: that is
      history and does not depend on the schedule still existing. */
-  var active = all.filter(function (x) { return !jobFinished(x) && taskLive(x); });
+  /* Active is work still inside its own date. A job past its day is overdue,
+     which is a different thing to say about it, and it is deliberately in
+     neither tab here: this page is the setup and the work it raised, not the
+     chase list. Overdue work is still on the Cleaning screens for the kitchen
+     that owes it, still counted in Reports, and still lands in Task Review
+     the moment it is sent in — nothing about the record changes. */
+  var active = all.filter(function (x) { return !jobFinished(x) && taskLive(x) && !jobOverdue(x); });
   var done = all.filter(jobFinished);
   /* All answers a different question from the other two. Active and Completed
      are about work — what is owed, what was signed off. All is the setup:
