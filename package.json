@@ -20,7 +20,8 @@
     "db:restart": "node server/scripts/db.js restart",
     "build": "node scripts/build.js",
     "vercel:headers": "node scripts/build.js --print",
-    "import:supabase": "node server/scripts/importSupabase.js"
+    "import:supabase": "node server/scripts/importSupabase.js",
+    "copy-db": "node server/scripts/copyDatabase.js"
   },
   "dependencies": {
     "@vercel/blob": "^2.8.0",

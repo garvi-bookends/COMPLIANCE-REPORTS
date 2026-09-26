@@ -65,16 +65,20 @@ console.log('[build] vercel.json security headers match server/securityHeaders.j
                  Admin and the starting roster. Accounts that already exist
                  are left alone, so nobody's changed password is ever reset.
 
-   Uses Neon's direct (unpooled) connection when the integration provides
-   one, which is what Neon recommends for schema changes. A failure here
-   fails the deployment, rather than going live on a half-built database.
-   Locally (no VERCEL variable) this step is skipped. */
+   Schema changes go down the direct connection when there is one. Neon's
+   integration calls it DATABASE_URL_UNPOOLED; on Supabase you set
+   DATABASE_URL_DIRECT yourself to the session-mode string. Either way the
+   app keeps using the pooled DATABASE_URL at runtime, which is what a
+   serverless function wants. A failure here fails the deployment, rather
+   than going live on a half-built database. Locally (no VERCEL variable)
+   this step is skipped. */
 if (process.env.VERCEL) {
   var spawnSync = require('child_process').spawnSync;
   var env = Object.assign({}, process.env);
-  if (env.DATABASE_URL_UNPOOLED) env.DATABASE_URL = env.DATABASE_URL_UNPOOLED;
+  var direct = env.DATABASE_URL_UNPOOLED || env.DATABASE_URL_DIRECT;
+  if (direct) env.DATABASE_URL = direct;
 
-  if (!env.DATABASE_URL) fail('DATABASE_URL is not set. Add the Neon database under Vercel → Storage and connect it to this project.');
+  if (!env.DATABASE_URL) fail('DATABASE_URL is not set. Add a Postgres database — Vercel → Storage for Neon, or Supabase → Settings → Database for a connection string — and put it here.');
 
   /* The example connection string is a shape, not an address: its host is
      literally ep-XXXX-pooler.REGION.aws.neon.tech. Pasted into Vercel as-is
@@ -83,7 +87,8 @@ if (process.env.VERCEL) {
   if (/ep-XXXX|REGION\.aws|USER:PASSWORD/.test(env.DATABASE_URL)) {
     fail('DATABASE_URL is still the example from .env.example — its host does not exist.\n' +
       '  Replace it with the real connection string:\n' +
-      '    Vercel → Storage → your Neon database → .env.local tab → copy DATABASE_URL\n' +
+      '    Neon:     Vercel → Storage → your database → .env.local tab → copy DATABASE_URL\n' +
+      '    Supabase: Project → Settings → Database → Connection string → Transaction pooler\n' +
       '  Connecting the Neon integration sets it for you; delete any DATABASE_URL you typed by hand first,\n' +
       '  because a manually added variable overrides the one the integration provides.');
   }
