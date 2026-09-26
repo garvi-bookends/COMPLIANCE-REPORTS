@@ -15241,6 +15241,15 @@ function serviceState(j) {
   var work = serviceWork(j.tk);
   if (work.length && work.every(jobFinished)) return 'done';
   if (!j.enabled) return 'off';
+  /* Active counts work that is still inside its own day. A job past its
+     date is overdue, which is a different thing to say about it, so a
+     service whose every open job is late is not counted active.
+
+     Work that was sent in or sent back is never read as overdue whatever
+     its date: somebody has acted on it, and what it is waiting for now is a
+     decision, not the day it was due. */
+  var open = work.filter(function (t) { return !jobFinished(t); });
+  if (open.length && open.every(jobOverdue)) return 'overdue';
   /* Switched on with something outstanding — not done, sent in and waiting,
      or sent back. Only an approval closes one. */
   return 'active';
@@ -15296,7 +15305,7 @@ function jobsSection(t) {
      is why the three counts need not add up. */
   var services = allServicesOfType(t.id).filter(function (j) { return !j.stopped; });
   var oneOffs = oneTimeJobsOfType(t.id);
-  var byState = { deleted: [], off: [], active: [], done: [] };
+  var byState = { deleted: [], off: [], overdue: [], active: [], done: [] };
   services.forEach(function (j) { byState[serviceState(j)].push({ svc: j }); });
   oneOffs.forEach(function (x) { byState[oneTimeState(x)].push({ job: x }); });
 
