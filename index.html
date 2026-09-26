@@ -11583,6 +11583,10 @@ var Cloud = {
   tombs: { tasks: {}, products: {} },     // deletions waiting to upload: id -> loc
   owner: null,                            // which account these cursors belong to
   timer: null, poll: null, busy: false,
+  /* Records held back because they are larger than the server accepts: a
+     photo still on the device. Counted per kind, not persisted — the next
+     push works it out again. */
+  held: {},
 
   on: function () { return !!(Api.token && ME); },
 
@@ -11665,6 +11669,11 @@ var Cloud = {
     SYNC_KINDS.forEach(function (k) { n += Object.keys(self.dirty[k]).length + Object.keys(self.tombs[k]).length; });
     return n;
   },
+  heldCount: function () {
+    var n = 0, self = this;
+    SYNC_KINDS.forEach(function (k) { n += self.held[k] || 0; });
+    return n;
+  },
   schedule: function () {
     if (!this.on()) return;
     var self = this;
@@ -11679,7 +11688,16 @@ var Cloud = {
     this.setState('syncing');
 
     function nextKind() {
-      if (k >= SYNC_KINDS.length) { self.saveState(); self.setState('ok'); if (cb) cb(null); return; }
+      if (k >= SYNC_KINDS.length) {
+        self.saveState();
+        /* Held back, not failed: say so, because a job that has not left the
+           phone has not reached whoever has to approve it. */
+        var n = self.heldCount();
+        if (n) self.setState('error', n + (n === 1 ? ' job is' : ' jobs are') +
+          ' waiting for a photo to upload — not on the server yet');
+        else self.setState('ok');
+        if (cb) cb(null); return;
+      }
       var kind = SYNC_KINDS[k++];
       var src = kind === 'tasks' ? DB.tasks : DB.products;
       var byId = {};
@@ -11700,13 +11718,22 @@ var Cloud = {
 
       /* Chunk by size as well as count: a task holding a photo taken
          offline carries it as a data: URL until it can be uploaded. */
-      var chunks = [], cur = [], bytes = 0;
+      var chunks = [], cur = [], bytes = 0, held = [];
       rows.forEach(function (r) {
         var size = JSON.stringify(r.row).length;
+        /* One record larger than the server accepts cannot be sent at all,
+           and sending it anyway fails the whole request — which left every
+           other change stuck behind it, including completed work on its way
+           to the Super Admin. Hold it back instead: it is a job whose photo
+           has not been uploaded yet, and it goes as soon as the photo
+           becomes a URL, which is what retryPhotoUploads() is for. */
+        if (size > SYNC_CHUNK_BYTES) { held.push(r); return; }
         if (cur.length && (bytes + size > SYNC_CHUNK_BYTES || cur.length >= SYNC_CHUNK_ROWS)) { chunks.push(cur); cur = []; bytes = 0; }
         cur.push(r); bytes += size;
       });
       if (cur.length) chunks.push(cur);
+      if (held.length) { self.held[kind] = held.length; retryPhotoUploads(); }
+      else delete self.held[kind];
 
       var ci = 0;
       (function nextChunk() {
@@ -11766,6 +11793,12 @@ var Cloud = {
            strings shared by all 8 kitchens, so it is fetched whole rather
            than going through the record-by-record merge. */
         pullChecklist();
+        /* A photo that could not be uploaded when it was taken — offline, or
+           before the photo store existed — is retried here, on every sync.
+           Until it becomes a URL it sits inside the record and the record is
+           too large to send, so this is what gets the job to the approver.
+           It used to run only when someone tapped "Sync now" by hand. */
+        retryPhotoUploads();
         if (cb) cb(null);
       });
     }
@@ -11845,7 +11878,10 @@ var Cloud = {
           if (r.status === 401 && data.code === 'TOKEN_EXPIRED' && !retried) {
             return Api.refresh().then(function () { return send(true); }, function () { cb('signed out', dataUrl); });
           }
-          cb(data.error || 'upload failed', dataUrl);
+          /* The code, where the server sent one: it says whether trying again
+             later could ever work. The callers only test for truth, so this
+             costs them nothing. */
+          cb(data.code || data.error || 'upload failed', dataUrl);
         });
       }).catch(function () { cb('offline', dataUrl); });
     }
@@ -11859,7 +11895,7 @@ var Cloud = {
   },
   label: function () {
     if (!this.on()) return navigator.onLine ? 'Not signed in' : 'Offline — will upload later';
-    if (this.state === 'error') return 'Sync problem';
+    if (this.state === 'error') return this.heldCount() ? 'Photo still uploading' : 'Sync problem';
     if (this.state === 'syncing') return 'Syncing…';
     var p = this.pendingCount();
     return p ? p + ' waiting to upload' : 'All devices in sync';
@@ -14475,7 +14511,14 @@ function retryPhotoUploads() {
     if (!q) { PHOTO_RETRY_BUSY = false; return; }
     var sent = q.o[q.f];
     Cloud.uploadPhoto(sent, q.o.loc, function (err, url) {
-      if (err) { PHOTO_RETRY_BUSY = false; return; }      /* try again after the next sync */
+      if (err) {
+        /* An image the server will never take — not a JPEG or PNG — is one
+           record's problem. Stopping here would leave every photo behind it
+           on its device too, and with it the job it belongs to. Anything
+           else (offline, no store yet) is worth waiting for. */
+        if (err === 'NOT_AN_IMAGE' || err === 'VALIDATION_ERROR') { next(); return; }
+        PHOTO_RETRY_BUSY = false; return;                  /* try again after the next sync */
+      }
       if (q.o[q.f] === sent) { q.o[q.f] = url; save(q.kind, q.o); }
       next();
     });
