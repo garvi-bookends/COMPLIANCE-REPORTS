@@ -24,10 +24,38 @@
 var express = require('express');
 var db = require('../db/pool');
 var userModel = require('../models/userModel');
+var wipeService = require('../services/wipeService');
 var requireAuth = require('../middleware/requireAuth');
 var asyncHandler = require('../middleware/errorHandler').asyncHandler;
 
 var router = express.Router();
+
+/* ---------------------------------------------------------------------------
+   The epoch: when the data was last wiped, or '' if it never was.
+
+   Every reply carries it and every upload has to quote it back. A device that
+   quotes an older one is holding records from before the wipe, and uploading
+   them would undo it — so it is told to throw its copy away and download
+   again. Nothing here compares clocks: the epoch is the server's own
+   timestamp, passed around as an opaque string, because a phone's idea of the
+   time is exactly what cannot be trusted.
+
+   Cached for a few seconds. It changes once in the life of an installation
+   and this sits on the path of every sync; the cost of the cache is that a
+   device may manage one more upload in the seconds after a wipe.
+   --------------------------------------------------------------------------- */
+var EPOCH_TTL = 10000;
+var epochCache = { at: null, read: 0 };
+
+function epochOf() {
+  if (epochCache.at !== null && Date.now() - epochCache.read < EPOCH_TTL) {
+    return Promise.resolve(epochCache.at);
+  }
+  return wipeService.lastWipeAt().then(function (at) {
+    epochCache = { at: at, read: Date.now() };
+    return at;
+  });
+}
 
 var TABLES = { tasks: 'bk_tasks', products: 'bk_products' };
 var READ_ONLY_ROLES = ['auditor'];
@@ -67,7 +95,9 @@ router.get('/:kind', asyncHandler(function (req, res) {
   var after = typeof req.query.after === 'string' && ID_RE.test(req.query.after) ? req.query.after : '';
 
   var all = seesAll(req.auth);
-  if (!all && !req.auth.loc) return res.json({ rows: [], more: false, cursor: new Date().toISOString() });
+
+  return epochOf().then(function (epoch) {
+  if (!all && !req.auth.loc) return res.json({ rows: [], more: false, epoch: epoch, cursor: new Date().toISOString() });
 
   var params = [since.toISOString(), after, PAGE + 1];
   var scope = '';
@@ -93,12 +123,13 @@ router.get('/:kind', asyncHandler(function (req, res) {
     });
     if (r.rows.length > PAGE) {
       var last = rows[rows.length - 1];
-      return res.json({ rows: rows, more: true, next: { since: last.updated_at, after: last.id } });
+      return res.json({ rows: rows, more: true, epoch: epoch, next: { since: last.updated_at, after: last.id } });
     }
     /* No rows means no `cursor` column came back; ask the clock directly. */
     var cursor = r.rows.length ? r.rows[0].cursor : null;
     return (cursor ? Promise.resolve(cursor) : db.query('select now() - ' + OVERLAP + ' as c').then(function (q) { return q.rows[0].c; }))
-      .then(function (c) { res.json({ rows: rows, more: false, cursor: new Date(c).toISOString() }); });
+      .then(function (c) { res.json({ rows: rows, more: false, epoch: epoch, cursor: new Date(c).toISOString() }); });
+  });
   });
 }));
 
@@ -123,6 +154,19 @@ router.post('/:kind', asyncHandler(function (req, res) {
 
   var rows = req.body && Array.isArray(req.body.rows) ? req.body.rows : null;
   if (!rows) return res.status(400).json({ error: 'Expected { rows: [...] }', code: 'VALIDATION_ERROR' });
+
+  /* Refuse an upload from a device that has not seen the wipe: its records
+     are the ones that were deliberately removed. It is told which epoch is
+     current so it can drop its copy and download again. Where there has never
+     been a wipe this costs nothing and changes nothing. */
+  return epochOf().then(function (epoch) {
+  if (epoch && (typeof req.body.epoch === 'string' ? req.body.epoch : '') !== epoch) {
+    return res.status(409).json({
+      error: 'The application data was wiped. This device still holds records from before that, so they were not uploaded.',
+      code: 'DATA_WIPED',
+      epoch: epoch
+    });
+  }
   if (rows.length > MAX_ROWS_PER_POST) {
     return res.status(413).json({ error: 'Send at most ' + MAX_ROWS_PER_POST + ' rows at a time', code: 'TOO_MANY_ROWS' });
   }
@@ -170,6 +214,7 @@ router.post('/:kind', asyncHandler(function (req, res) {
       });
       res.json({ saved: saved, rejected: rejected.concat(denied), current: current });
     });
+  });
   });
 }));
 

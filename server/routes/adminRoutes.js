@@ -15,6 +15,7 @@
      POST   /api/admin/users/:id/reset-password reset a forgotten password
      DELETE /api/admin/users/:id                remove someone who has left
      GET    /api/admin/login-audit              recent sign-in attempts
+     POST   /api/admin/wipe                     empty the application's data
    --------------------------------------------------------------------------- */
 
 var express = require('express');
@@ -22,6 +23,7 @@ var db = require('../db/pool');
 var userModel = require('../models/userModel');
 var authService = require('../services/authService');
 var passwords = require('../services/passwordService');
+var wipeService = require('../services/wipeService');
 var config = require('../config/env');
 var requireAuth = require('../middleware/requireAuth');
 var requireManager = require('../middleware/requireRole').requireManager;
@@ -367,6 +369,41 @@ router.get('/login-audit', asyncHandler(function (req, res) {
       })
     });
   });
+}));
+
+/* ---------------------------------------------------------------------------
+   POST /api/admin/wipe   { confirm: "WIPE ALL DATA" }
+
+   Empties the application's data: every recorded job, label, service, added
+   job type, account other than the Super Admin, and every uploaded photo.
+   What it keeps and why is in server/services/wipeService.js.
+
+   The role is read from the signed token, never from the request, and the
+   route sits behind requireSuperadmin — an admin, an exec or a kitchen
+   account gets 403 here whatever their app is showing them. There is no CSRF
+   token to check because there is nothing to forge: this call needs an
+   Authorization header the browser does not attach on its own, and the only
+   cookie the app sets is SameSite=Strict.
+
+   The typed phrase is checked again here. In the browser it stops a
+   mis-click; here it stops a request being replayed from a log or a history.
+   --------------------------------------------------------------------------- */
+router.post('/wipe', requireSuperadmin, asyncHandler(function (req, res) {
+  var confirm = req.body && typeof req.body.confirm === 'string' ? req.body.confirm.trim() : '';
+  if (confirm !== wipeService.CONFIRM_PHRASE) {
+    return res.status(400).json({
+      error: 'Type ' + wipeService.CONFIRM_PHRASE + ' exactly to confirm',
+      code: 'CONFIRM_REQUIRED'
+    });
+  }
+
+  return wipeService.run({ id: req.auth.id, uid: req.auth.uid, role: req.auth.role }, req.ip)
+    .then(function (summary) {
+      /* Named on the way out as well as in the audit row: a wipe is worth a
+         line in the server log wherever that log is read. */
+      console.warn('[wipe] ' + req.auth.uid + ' wiped the application data: ' + JSON.stringify(summary));
+      res.json({ ok: true, wiped: summary });
+    });
 }));
 
 module.exports = router;

@@ -10557,6 +10557,9 @@ var Api = {
         var err = new Error((data && data.error) || ('Request failed (' + r.status + ')'));
         err.status = r.status;
         err.code = (data && data.code) || 'HTTP_' + r.status;
+        /* The rest of the reply, for the few refusals that hand something
+           back with them — the epoch after a wipe, for instance. */
+        err.data = data;
         throw err;
       });
     }, function () {
@@ -11587,6 +11590,10 @@ var Cloud = {
      photo still on the device. Counted per kind, not persisted — the next
      push works it out again. */
   held: {},
+  /* Which wipe of the data this device has seen: the server's own timestamp,
+     treated as an opaque string. Empty until the server says otherwise, which
+     is also what it says where the data has never been wiped. */
+  epoch: '',
 
   on: function () { return !!(Api.token && ME); },
 
@@ -11598,10 +11605,11 @@ var Cloud = {
     if (s.cursor) this.cursor = s.cursor;
     if (s.dirty) this.dirty = s.dirty;
     if (s.tombs) this.tombs = s.tombs;
+    if (typeof s.epoch === 'string') this.epoch = s.epoch;
   },
   saveState: function () {
     try {
-      localStorage.setItem(SYNC_KEY, JSON.stringify({ owner: this.owner, cursor: this.cursor, dirty: this.dirty, tombs: this.tombs }));
+      localStorage.setItem(SYNC_KEY, JSON.stringify({ owner: this.owner, cursor: this.cursor, dirty: this.dirty, tombs: this.tombs, epoch: this.epoch }));
     } catch (e) { }
   },
 
@@ -11674,6 +11682,27 @@ var Cloud = {
     SYNC_KINDS.forEach(function (k) { n += self.held[k] || 0; });
     return n;
   },
+
+  /* The Super Admin wiped the data. What this device is holding is precisely
+     what was deleted, so it goes — records, the queue of uploads waiting to
+     be sent, and the cursors, which would otherwise ask for "changes since"
+     a moment that no longer means anything. The new epoch is remembered so
+     this happens once.
+
+     The activity log is left alone: it is this phone's own note of what was
+     done on it, not the shared records, and it is where "the data was wiped"
+     itself is written down. */
+  adoptEpoch: function (epoch) {
+    this.epoch = typeof epoch === 'string' ? epoch : '';
+    this.cursor = { tasks: null, products: null };
+    this.dirty = { tasks: {}, products: {} };
+    this.tombs = { tasks: {}, products: {} };
+    this.held = {};
+    DB.tasks = [];
+    DB.products = [];
+    saveLocal();
+    this.saveState();
+  },
   schedule: function () {
     if (!this.on()) return;
     var self = this;
@@ -11739,7 +11768,7 @@ var Cloud = {
       (function nextChunk() {
         if (ci >= chunks.length) { nextKind(); return; }
         var chunk = chunks[ci++];
-        Api.post('/api/sync/' + kind, { rows: chunk.map(function (r) { return r.row; }) }).then(function (res) {
+        Api.post('/api/sync/' + kind, { rows: chunk.map(function (r) { return r.row; }), epoch: self.epoch }).then(function (res) {
           /* Saved, skipped as out of scope, or older than the server's copy —
              either way this device is done with it; a newer copy arrives on
              the next pull. */
@@ -11762,6 +11791,16 @@ var Cloud = {
             /* An Auditor's device never uploads; drop the queue quietly. */
             self.dirty[kind] = {}; self.tombs[kind] = {}; self.saveState();
             nextKind(); return;
+          }
+          if (err.code === 'DATA_WIPED') {
+            /* These records were deleted deliberately. Uploading them would
+               undo the wipe, so the device gives up its copy and downloads
+               what there is now instead. */
+            self.adoptEpoch(err.data && err.data.epoch);
+            self.setState('ok');
+            if (typeof render === 'function' && ME) render();
+            self.sync(cb);
+            return;
           }
           self.saveState();
           self.setState('error', err.message);
@@ -11809,6 +11848,15 @@ var Cloud = {
       (function page(since, after) {
         var q = '?since=' + encodeURIComponent(since || '1970-01-01T00:00:00Z') + (after ? '&after=' + encodeURIComponent(after) : '');
         Api.get('/api/sync/' + kind + q).then(function (res) {
+          /* A wipe this device has not seen: start the whole sync again with
+             nothing of its own, rather than merging the old records back in. */
+          if (typeof res.epoch === 'string' && res.epoch !== self.epoch) {
+            self.adoptEpoch(res.epoch);
+            self.busy = false;
+            if (typeof render === 'function' && ME) render();
+            self.sync(cb);
+            return;
+          }
           if (self.merge(kind, res.rows || [], first, seen)) changed = true;
           if (res.more) { page(res.next.since, res.next.after); return; }
           self.cursor[kind] = res.cursor;
@@ -13140,6 +13188,10 @@ function meSheet() {
     (!p.superadmin && p.manage ? '<button class="btn sec" data-a="users" style="margin-bottom:10px">👥 People, roles &amp; passwords</button>' +
       '<button class="btn sec" data-a="checklist" style="margin-bottom:10px">📋 Cleaning checklist</button>' : '') +
     (p.manage ? '<button class="btn sec" data-a="activity" style="margin-bottom:10px">🕘 Audit log</button>' : '') +
+    /* Emptying the app is the Super Admin's alone, and it sits here rather
+       than among the management screens: it is not a way of managing the
+       work, it is how you hand the app to somebody else. */
+    (p.superadmin ? '<button class="btn no" data-a="wipeAsk" style="margin-bottom:10px">⚠️ Wipe All Data</button>' : '') +
     '<button class="btn sec" data-a="help" style="margin-bottom:10px">❓ How to use the app</button>' +
     '<button class="btn sec" data-a="about" style="margin-bottom:10px">ℹ️ About &amp; version</button>' +
     '<div class="sec-t">Account</div>' +
@@ -13168,6 +13220,130 @@ function helpSheet() {
         '<span class="grow"><span class="t">' + h(s[1]) + '</span><div class="sm muted" style="margin-top:2px">' + h(s[2]) + '</div></span></div>';
     }).join('') + '</div>' +
     '<div class="card sm muted">Kitchens run on electric equipment only — never spray water near plug points, switches or cables. Wipe those dry.</div>');
+}
+
+/* ---------------- WIPE ALL DATA (Super Admin) ----------------
+   Handing the app to another group, or starting again from nothing.
+
+   Two doors, both deliberately awkward: the phrase typed out by hand, then a
+   last confirmation. Neither of them is what makes this safe — the server
+   checks the role from the signed token and the phrase again, and that is the
+   check that decides. These are here so nobody arrives at it by accident. */
+var WIPE_PHRASE = 'WIPE ALL DATA';
+
+/* What this device can see of what would go, so the warning is concrete
+   rather than abstract. The server counts it properly and reports what it
+   actually removed. */
+function wipeTally() {
+  var out = [];
+  var jobs = (DB.tasks || []).length;
+  var recorded = (DB.tasks || []).filter(function (t) { return t.status !== 'pending'; }).length;
+  var labels = (DB.products || []).length;
+  var services = Object.keys(DB.checklist || {}).length;
+  if (jobs) out.push(jobs + ' cleaning job' + (jobs === 1 ? '' : 's') +
+    (recorded ? ', ' + recorded + ' of them recorded with photos' : ''));
+  if (labels) out.push(labels + ' label and expiry record' + (labels === 1 ? '' : 's'));
+  if (services) out.push(services + ' service' + (services === 1 ? '' : 's') + ', and every job type that was added');
+  out.push('every account except your own Super Admin login');
+  out.push('every photo in the photo store');
+  return out;
+}
+
+function wipeAsk() {
+  if (!perm().superadmin) return;
+  _dlgCb = null;
+  $('#dialog').innerHTML = '<div class="dlg-ovl"><div class="dlg">' +
+    '<h3>⚠️ Wipe all data</h3>' +
+    '<p>This permanently deletes the data on the server and on every device. <b>It cannot be undone.</b></p>' +
+    '<ul class="sm" style="margin:0 0 12px;padding-left:20px">' +
+    wipeTally().map(function (s) { return '<li style="margin:4px 0">' + h(s) + '</li>'; }).join('') +
+    '</ul>' +
+    '<div class="sm muted" style="margin-bottom:12px">Kept: the app itself, your Super Admin login and password, and the built-in Cleaning and Labelling sections. This week\'s empty jobs are generated again, as they are every week. A backup holds the records, not the photo files — those are deleted from the store.</div>' +
+    '<button class="btn sec" data-a="wipeBackup" style="margin-bottom:12px">⬇️ Download a backup first</button>' +
+    '<label class="f"><span>Type <b>' + WIPE_PHRASE + '</b> to continue</span>' +
+    '<input class="inp" id="wipe_in" autocomplete="off" autocapitalize="characters" autocorrect="off" spellcheck="false" placeholder="' + WIPE_PHRASE + '"></label>' +
+    '<div class="btnrow"><button class="btn sec" data-a="dlgNo">Cancel</button>' +
+    '<button class="btn no" id="wipe_go" data-a="wipeGo" disabled>Wipe all data</button></div>' +
+    '</div></div>';
+  var i = document.getElementById('wipe_in'); if (i) i.focus();
+}
+
+/* Everything this device holds, as a file, before it is thrown away: the
+   records as they are synced, and the roster without a password anywhere in
+   it. The photos are URLs — the files themselves live in the photo store and
+   the wipe deletes them, which the warning says. */
+function downloadBackup() {
+  var dump = {
+    exportedAt: new Date().toISOString(),
+    exportedBy: ME ? { uid: ME.uid, name: ME.name } : null,
+    tasks: DB.tasks || [],
+    products: DB.products || [],
+    checklist: DB.checklist || {},
+    jobTypes: DB.jobTypes || [],
+    users: (DB.users || []).map(function (u) {
+      return { id: u.id, uid: u.uid, name: u.name, role: u.role, loc: u.loc };
+    }),
+    log: DB.log || []
+  };
+  try {
+    var url = URL.createObjectURL(new Blob([JSON.stringify(dump, null, 2)], { type: 'application/json' }));
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = 'bookends-backup-' + ymd(today()) + '.json';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(function () { URL.revokeObjectURL(url); }, 4000);
+    toast('Backup downloaded');
+  } catch (e) { toast('Could not make the backup file'); }
+}
+
+function wipeConfirmed() {
+  var typed = ((document.getElementById('wipe_in') || {}).value || '').trim();
+  if (typed !== WIPE_PHRASE) return;                 /* the button is disabled anyway */
+  closeDlg();
+  askConfirm('Last chance',
+    'This will permanently delete application data, jobs, assignments, records and uploaded files. This action cannot be undone.',
+    'Yes, wipe everything', function () { wipeRun(typed); }, true);
+}
+
+function wipeSummary(w) {
+  var bits = [];
+  if (w.tasks) bits.push(w.tasks + ' job' + (w.tasks === 1 ? '' : 's'));
+  if (w.labels) bits.push(w.labels + ' label record' + (w.labels === 1 ? '' : 's'));
+  if (w.services) bits.push(w.services + ' service' + (w.services === 1 ? '' : 's'));
+  if (w.job_types) bits.push(w.job_types + ' added job type' + (w.job_types === 1 ? '' : 's'));
+  if (w.accounts) bits.push(w.accounts + ' account' + (w.accounts === 1 ? '' : 's'));
+  if (w.photos) bits.push(w.photos + ' photo' + (w.photos === 1 ? '' : 's'));
+  return bits.length ? 'Removed ' + bits.join(', ') + '.' : 'There was nothing left to remove.';
+}
+
+function wipeRun(phrase) {
+  toast('Wiping…');
+  Api.post('/api/admin/wipe', { confirm: phrase }).then(function (res) {
+    var w = (res && res.wiped) || {};
+    /* Into this phone's own log first, while there is still something to
+       write it next to. The server keeps its own record in app_admin_audit,
+       which is the one that survives. */
+    logAct('wipe', 'All application data wiped — ' + wipeSummary(w), null);
+    /* The device gives up its copy and takes the new epoch, so nothing here
+       is uploaded back afterwards. */
+    Cloud.adoptEpoch(w.at);
+    DB.users = (DB.users || []).filter(function (u) { return u.role === 'superadmin'; });
+    DB.checklist = {};
+    saveLocal();
+    MGMT_USERS = null; MGMT_Q = ''; MGMT_FILTER = 'all';
+    closeSheet();
+    S.tab = homeTab(); S.manage = 'home';
+    render();
+    pullChecklist(); pullJobTypes(); refreshPendingSignups();
+    Cloud.sync();
+    showNotice('All application data has been wiped successfully.', h(wipeSummary(w)));
+  }, function (err) {
+    /* Never a false success: if it did not run, say so and say the data is
+       untouched, because the transaction rolled back. */
+    showNotice('Nothing was wiped', h(err && err.offline
+      ? 'You are offline — a wipe needs a connection. Nothing was changed.'
+      : ((err && err.message) || 'The wipe did not run.') + ' The data is unchanged.'));
+  });
 }
 
 /* ---------- about ---------- */
@@ -15883,6 +16059,11 @@ document.addEventListener('click', function (ev) {
     case 'savePwSheet': savePw(false); break;
     case 'changePw': PW_ERR = ''; closeSheet(); changePwSheet(); break;
     case 'cloudSetup': closeSheet(); cloudSheet(); break;
+    /* Emptying the app. The role is checked here, in wipeAsk, and again on
+       the server, which is the one that counts. */
+    case 'wipeAsk': if (!perm().superadmin) break; closeSheet(); wipeAsk(); break;
+    case 'wipeBackup': downloadBackup(); break;
+    case 'wipeGo': if (!perm().superadmin) break; wipeConfirmed(); break;
     case 'cloudSync': toast('Syncing…'); Cloud.sync(function (err) { toast(err ? 'Sync failed' : 'Up to date'); closeSheet(); cloudSheet(); retryPhotoUploads(); }); break;
     case 'copyLink': copyText(appLink(), 'App link copied'); break;
     /* Setting someone else's password is the Super Admin's — the endpoint
@@ -16112,6 +16293,12 @@ document.addEventListener('change', function (ev) {
   }
 });
 document.addEventListener('input', function (ev) {
+  /* The wipe button stays dead until the phrase is exactly right. */
+  if (ev.target.id === 'wipe_in') {
+    var go = document.getElementById('wipe_go');
+    if (go) go.disabled = ev.target.value.trim() !== WIPE_PHRASE;
+    return;
+  }
   if (ev.target.id === 'pq') {
     S.q = ev.target.value;
     var loc = S.loc, f = S.expFilter;

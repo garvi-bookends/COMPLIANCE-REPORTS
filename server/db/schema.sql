@@ -350,6 +350,35 @@ alter table bk_checklist add  constraint bk_checklist_freq_valid
 
 
 -- ---------------------------------------------------------------------------
+-- 4f. Administrative actions that have to leave a permanent trace.
+--
+-- At the moment there is one: wiping the application's data. The whole point
+-- of this table is to outlive what it describes, so the wipe never touches
+-- it — after a wipe this is the only place that says a wipe happened, who
+-- asked for it, and how much it removed.
+--
+-- `at` is also the wipe's own identity. Every device carries the timestamp of
+-- the wipe it has seen; one it has not seen means its copy of the records
+-- predates the wipe and has to be thrown away rather than uploaded again.
+-- Without that a phone that was in a fridge aisle during the wipe would put
+-- every deleted record back within the minute.
+-- ---------------------------------------------------------------------------
+create table if not exists app_admin_audit (
+  id         bigserial   primary key,
+  at         timestamptz not null default now(),
+  action     text        not null,
+  actor_id   text,
+  actor_uid  text,
+  actor_role text,
+  ip         text,
+  detail     jsonb,                                 -- what was removed, counted
+  constraint app_admin_audit_action check (action in ('wipe'))
+);
+
+create index if not exists app_admin_audit_at on app_admin_audit (action, at desc);
+
+
+-- ---------------------------------------------------------------------------
 -- 5. Lock these tables away from the browser.
 --
 -- The frontend holds a Supabase anon key. Enabling RLS with NO policies means
@@ -367,6 +396,7 @@ alter table bk_products          enable row level security;
 alter table bk_checklist         enable row level security;
 alter table bk_checklist_audit   enable row level security;
 alter table bk_job_types         enable row level security;
+alter table app_admin_audit      enable row level security;
 
 -- A database that used to be the Supabase cloud-sync target still has the old
 -- "anyone may do anything" policies on bk_tasks / bk_products. Drop them, so
@@ -393,7 +423,8 @@ begin
       select unnest(array['app_users', 'app_user_credentials',
                           'app_refresh_tokens', 'app_login_audit',
                           'app_rate_limits', 'bk_tasks', 'bk_products',
-                          'bk_checklist', 'bk_checklist_audit', 'bk_job_types'])
+                          'bk_checklist', 'bk_checklist_audit', 'bk_job_types',
+                          'app_admin_audit'])
     loop
       execute format('revoke all on table %I from %I', tbl, r);
     end loop;
