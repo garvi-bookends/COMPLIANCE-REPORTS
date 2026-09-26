@@ -93,6 +93,17 @@ if (process.env.VERCEL) {
       '  because a manually added variable overrides the one the integration provides.');
   }
 
+  /* Which database settings actually reached the build. Connection strings
+     are named, never printed — they carry a password. The two TLS switches
+     are printed in full: they are booleans, and a missing one surfaces much
+     later as a certificate error that says nothing about them. A variable
+     saved for the wrong environment is invisible without this line. */
+  console.log('[build] database settings: ' +
+    ['DATABASE_URL', 'DATABASE_URL_DIRECT', 'DATABASE_URL_UNPOOLED']
+      .filter(function (k) { return env[k]; }).join(', ') +
+    '  DATABASE_SSL=' + (env.DATABASE_SSL || '(unset)') +
+    '  DATABASE_SSL_NO_VERIFY=' + (env.DATABASE_SSL_NO_VERIFY || '(unset)'));
+
   var steps = [['migrate', 'server/scripts/migrate.js']];
   if (env.SEED_ADMIN_PASSWORD) steps.push(['seed', 'server/scripts/seed.js']);
   else console.log('[build] SEED_ADMIN_PASSWORD not set — skipping account creation');

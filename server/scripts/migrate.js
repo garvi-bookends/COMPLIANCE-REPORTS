@@ -49,5 +49,14 @@ run()
   .catch(function (err) {
     console.error('[migrate] FAILED: ' + err.message);
     if (err.position) console.error('[migrate] at character position ' + err.position + ' of schema.sql');
+    /* A Supabase pooler always presents a self-signed certificate, so
+       verification against it can never succeed — and the error names the
+       certificate rather than the setting that decides whether it is
+       checked. Name the setting. */
+    if (/self[- ]signed certificate/i.test(err.message || '')) {
+      console.error('[migrate] a self-signed certificate is normal for a Supabase pooler.');
+      console.error('[migrate] set DATABASE_SSL_NO_VERIFY=true wherever DATABASE_URL is set,');
+      console.error('[migrate] and on Vercel for the same environment this build runs in.');
+    }
     db.close().then(function () { process.exit(1); }, function () { process.exit(1); });
   });
