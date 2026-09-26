@@ -374,10 +374,10 @@ router.get('/login-audit', asyncHandler(function (req, res) {
 /* ---------------------------------------------------------------------------
    POST /api/admin/wipe   { confirm: "WIPE ALL DATA" }
 
-   Empties the application's data: every recorded job, label, service, added
-   job type and uploaded photo. Accounts and passwords are not touched — the
-   work is wiped, not the people. What it keeps and why is in
-   server/services/wipeService.js.
+   Empties the recorded work: every cleaning job, every label and expiry
+   record, and every uploaded photo. Nothing that was set up is touched —
+   accounts, passwords, services, assignments and job types all stay. What it
+   keeps and why is in server/services/wipeService.js.
 
    The role is read from the signed token, never from the request, and the
    route sits behind requireSuperadmin — an admin, an exec or a kitchen

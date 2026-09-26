@@ -1,16 +1,17 @@
 'use strict';
 /* ---------------------------------------------------------------------------
-   Wiping the application's data — the Super Admin's last resort, for handing
-   the app to a new group or starting a season again.
+   Wiping the recorded work — the Super Admin's way of starting a season
+   again without setting the app up from scratch.
 
-   What goes:
+   The line it draws is between what was RECORDED and what was SET UP. The
+   records go; the setup stays, because the setup is a day's work to rebuild
+   and none of it is what anybody wants rid of.
+
+   What goes — the three screens that fill up:
      bk_tasks             every cleaning job ever recorded, done or not
-     bk_products          every label / expiry record
-     bk_checklist         the services, including the ones that were added
-     bk_checklist_audit   the history of those services
-     bk_job_types         only the ones somebody added; the built-in ones stay
-     app_rate_limits      short-lived counters
-     the photo store      every uploaded photo
+     bk_products          every label and every expiry record (one table
+                          holds both: a label carries the expiry date)
+     the photo store      every uploaded photo, which belongs to those records
 
    What stays, and why:
      the schema           no table is dropped; the app must still run
@@ -20,11 +21,16 @@
                           day than the one that made somebody want a clean
                           slate. Nobody is signed out either — the sessions
                           are left where they are.
+     bk_checklist         the services, who they are given to, what they are
+                          called: the setup the Super Admin built
+     bk_checklist_audit   its history, worth keeping because the services are
+     bk_job_types         all of them, added ones included
      app_login_audit      the sign-in trail of those accounts, which is worth
                           keeping precisely because the accounts are
-     the built-in job types  Cleaning and Labelling are screens, not data:
-                          without them a person cannot be given work at all
      app_admin_audit      the record that this happened. See schema.sql 4f.
+
+   The week's empty jobs are generated again from the services, as they are
+   every week. That is the app working, not the wipe failing.
 
    All of it is one transaction. The photos are deleted before the commit, so
    a storage failure rolls the database back rather than leaving records that
@@ -41,14 +47,11 @@ var config = require('../config/env');
    request, and the server is the only place that decision can be trusted. */
 var CONFIRM_PHRASE = 'WIPE ALL DATA';
 
-/* Tables emptied outright: the recorded work and nothing else. No table here
-   is a parent of another, so the order is only the order they read in. */
+/* Emptied outright, and nothing else is touched. Neither is a parent of the
+   other, so the order is only the order they read in. */
 var EMPTY_WHOLE = [
   'bk_tasks',
-  'bk_products',
-  'bk_checklist_audit',
-  'bk_checklist',
-  'app_rate_limits'
+  'bk_products'
 ];
 
 /* One wipe at a time per process. A double-tap sends two requests; the second
@@ -59,14 +62,14 @@ var running = false;
 function countRows(client) {
   return client.query(
     'select' +
-    ' (select count(*) from bk_tasks)                                  as tasks,' +
-    ' (select count(*) from bk_products)                               as labels,' +
-    ' (select count(*) from bk_checklist)                              as services,' +
-    ' (select count(*) from bk_checklist_audit)                         as service_history,' +
-    ' (select count(*) from bk_job_types where not builtin)             as job_types,' +
-    /* Not removed — reported so the audit row says how many accounts came
-       through it untouched. */
-    ' (select count(*) from app_users)                                  as accounts_kept'
+    /* Removed */
+    ' (select count(*) from bk_tasks)      as tasks,' +
+    ' (select count(*) from bk_products)   as labels,' +
+    /* Kept — counted so the audit row says what came through untouched,
+       which is the part somebody will want to check afterwards. */
+    ' (select count(*) from app_users)     as accounts_kept,' +
+    ' (select count(*) from bk_checklist)  as services_kept,' +
+    ' (select count(*) from bk_job_types)  as job_types_kept'
   ).then(function (r) {
     var c = r.rows[0], out = {};
     Object.keys(c).forEach(function (k) { out[k] = Number(c[k]); });
@@ -120,8 +123,6 @@ function run(actor, ip) {
           return chain.then(function () { return client.query('delete from ' + table); });
         }, Promise.resolve());
       })
-      /* Added job types go; Cleaning and Labelling are part of the app. */
-      .then(function () { return client.query('delete from bk_job_types where not builtin'); })
       .then(function () { return wipePhotos(); })
       .then(function (storage) {
         summary.photos = storage.photos;
