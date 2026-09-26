@@ -13244,7 +13244,6 @@ function wipeTally() {
     (recorded ? ', ' + recorded + ' of them recorded with photos' : ''));
   if (labels) out.push(labels + ' label and expiry record' + (labels === 1 ? '' : 's'));
   if (services) out.push(services + ' service' + (services === 1 ? '' : 's') + ', and every job type that was added');
-  out.push('every account except your own Super Admin login');
   out.push('every photo in the photo store');
   return out;
 }
@@ -13258,7 +13257,7 @@ function wipeAsk() {
     '<ul class="sm" style="margin:0 0 12px;padding-left:20px">' +
     wipeTally().map(function (s) { return '<li style="margin:4px 0">' + h(s) + '</li>'; }).join('') +
     '</ul>' +
-    '<div class="sm muted" style="margin-bottom:12px">Kept: the app itself, your Super Admin login and password, and the built-in Cleaning and Labelling sections. This week\'s empty jobs are generated again, as they are every week. A backup holds the records, not the photo files — those are deleted from the store.</div>' +
+    '<div class="sm muted" style="margin-bottom:12px"><b>Everyone keeps their account and their password</b> — the work is wiped, not the people. Also kept: the app itself and the built-in Cleaning and Labelling sections. This week\'s empty jobs are generated again, as they are every week. A backup holds the records, not the photo files — those are deleted from the store.</div>' +
     '<button class="btn sec" data-a="wipeBackup" style="margin-bottom:12px">⬇️ Download a backup first</button>' +
     '<label class="f"><span>Type <b>' + WIPE_PHRASE + '</b> to continue</span>' +
     '<input class="inp" id="wipe_in" autocomplete="off" autocapitalize="characters" autocorrect="off" spellcheck="false" placeholder="' + WIPE_PHRASE + '"></label>' +
@@ -13311,9 +13310,9 @@ function wipeSummary(w) {
   if (w.labels) bits.push(w.labels + ' label record' + (w.labels === 1 ? '' : 's'));
   if (w.services) bits.push(w.services + ' service' + (w.services === 1 ? '' : 's'));
   if (w.job_types) bits.push(w.job_types + ' added job type' + (w.job_types === 1 ? '' : 's'));
-  if (w.accounts) bits.push(w.accounts + ' account' + (w.accounts === 1 ? '' : 's'));
   if (w.photos) bits.push(w.photos + ' photo' + (w.photos === 1 ? '' : 's'));
-  return bits.length ? 'Removed ' + bits.join(', ') + '.' : 'There was nothing left to remove.';
+  var kept = w.accounts_kept ? ' All ' + w.accounts_kept + ' accounts were kept.' : '';
+  return (bits.length ? 'Removed ' + bits.join(', ') + '.' : 'There was nothing left to remove.') + kept;
 }
 
 function wipeRun(phrase) {
@@ -13327,7 +13326,7 @@ function wipeRun(phrase) {
     /* The device gives up its copy and takes the new epoch, so nothing here
        is uploaded back afterwards. */
     Cloud.adoptEpoch(w.at);
-    DB.users = (DB.users || []).filter(function (u) { return u.role === 'superadmin'; });
+    /* The roster is untouched by a wipe, so it stays exactly as it is. */
     DB.checklist = {};
     saveLocal();
     MGMT_USERS = null; MGMT_Q = ''; MGMT_FILTER = 'all';

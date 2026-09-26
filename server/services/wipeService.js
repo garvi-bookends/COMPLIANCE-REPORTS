@@ -9,24 +9,22 @@
      bk_checklist         the services, including the ones that were added
      bk_checklist_audit   the history of those services
      bk_job_types         only the ones somebody added; the built-in ones stay
-     app_users            every account except the Super Admin
-     app_login_audit      sign-in history, which is otherwise a list of the
-                          people who no longer exist
      app_rate_limits      short-lived counters
      the photo store      every uploaded photo
 
    What stays, and why:
      the schema           no table is dropped; the app must still run
-     the Super Admin      including the password — otherwise nobody can sign
-                          in afterwards and the app is finished, not wiped
+     every account        and every password. The work is what gets wiped, not
+                          the people who did it: rebuilding a roster of twelve
+                          by hand, and handing out new passwords, is a worse
+                          day than the one that made somebody want a clean
+                          slate. Nobody is signed out either — the sessions
+                          are left where they are.
+     app_login_audit      the sign-in trail of those accounts, which is worth
+                          keeping precisely because the accounts are
      the built-in job types  Cleaning and Labelling are screens, not data:
                           without them a person cannot be given work at all
      app_admin_audit      the record that this happened. See schema.sql 4f.
-
-   Credentials and refresh tokens are not deleted by name: both are
-   `on delete cascade` from app_users, so removing an account takes its
-   password hash and its sessions with it. The Super Admin's own session is
-   left alone, so the person doing this is not signed out mid-wipe.
 
    All of it is one transaction. The photos are deleted before the commit, so
    a storage failure rolls the database back rather than leaving records that
@@ -37,21 +35,19 @@
 
 var db = require('../db/pool');
 var config = require('../config/env');
-var userModel = require('../models/userModel');
 
 /* The phrase the caller has to send. Typed by hand in the browser, checked
    again here: a wipe should not be reachable by a mis-click or a replayed
    request, and the server is the only place that decision can be trusted. */
 var CONFIRM_PHRASE = 'WIPE ALL DATA';
 
-/* Tables emptied outright, children before parents. app_users is last and on
-   its own because a row of it is kept. */
+/* Tables emptied outright: the recorded work and nothing else. No table here
+   is a parent of another, so the order is only the order they read in. */
 var EMPTY_WHOLE = [
   'bk_tasks',
   'bk_products',
   'bk_checklist_audit',
   'bk_checklist',
-  'app_login_audit',
   'app_rate_limits'
 ];
 
@@ -68,9 +64,9 @@ function countRows(client) {
     ' (select count(*) from bk_checklist)                              as services,' +
     ' (select count(*) from bk_checklist_audit)                         as service_history,' +
     ' (select count(*) from bk_job_types where not builtin)             as job_types,' +
-    ' (select count(*) from app_users where role <> $1)                 as accounts,' +
-    ' (select count(*) from app_login_audit)                            as login_history',
-    [userModel.SUPERADMIN]
+    /* Not removed — reported so the audit row says how many accounts came
+       through it untouched. */
+    ' (select count(*) from app_users)                                  as accounts_kept'
   ).then(function (r) {
     var c = r.rows[0], out = {};
     Object.keys(c).forEach(function (k) { out[k] = Number(c[k]); });
@@ -120,27 +116,12 @@ function run(actor, ip) {
     return countRows(client)
       .then(function (counts) {
         summary = counts;
-        /* Refuse to leave the app unreachable. This cannot normally happen —
-           the caller is the Super Admin — but a wipe is the wrong moment to
-           assume anything about the roster. */
-        return client.query('select count(*) as n from app_users where role = $1 and coalesce(disabled, false) = false',
-          [userModel.SUPERADMIN]);
-      })
-      .then(function (r) {
-        if (Number(r.rows[0].n) < 1) {
-          var err = new Error('There is no enabled Super Admin account to keep — nothing was wiped');
-          err.status = 409; err.code = 'NO_SUPERADMIN'; err.expected = true;
-          throw err;
-        }
         return EMPTY_WHOLE.reduce(function (chain, table) {
           return chain.then(function () { return client.query('delete from ' + table); });
         }, Promise.resolve());
       })
       /* Added job types go; Cleaning and Labelling are part of the app. */
       .then(function () { return client.query('delete from bk_job_types where not builtin'); })
-      /* Last, and the only table with a survivor. Credentials and sessions of
-         everyone removed here go with them, by cascade. */
-      .then(function () { return client.query('delete from app_users where role <> $1', [userModel.SUPERADMIN]); })
       .then(function () { return wipePhotos(); })
       .then(function (storage) {
         summary.photos = storage.photos;
