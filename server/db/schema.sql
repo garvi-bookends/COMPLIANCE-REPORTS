@@ -282,9 +282,9 @@ on conflict (id) do nothing;
 -- expiry work the way they are assigned a clean. Removed here as well as from
 -- the seed, so a database that already picked it up drops it on the next
 -- migrate rather than keeping a type nothing can reach.
-delete from bk_job_types where id = 'expiry-date' and not exists (
-  select 1 from bk_checklist where job_type = 'expiry-date'
-);
+-- (moved below, after bk_checklist.job_type is added: the whole file runs in
+-- one transaction, so on a database being built for the first time this read
+-- came before the column existed and took the migration down with it.)
 
 -- The people a service is given to, as an array of app_users ids:
 --   ["U-A1B2C3","U-D4E5F6"]
@@ -293,12 +293,21 @@ delete from bk_job_types where id = 'expiry-date' and not exists (
 -- and still holds the first of them, so a device still running the previous
 -- version reads a sensible answer instead of none.
 alter table bk_checklist add column if not exists assignees jsonb;
-update bk_checklist set assignees = to_jsonb(array[assigned_to])
- where assigned_to is not null and assignees is null;
+-- (its backfill is below, once assigned_to exists: the whole file is one
+-- transaction, and on a database being built for the first time this read a
+-- column that had not been added yet.)
 
 -- Which job type a service belongs to. Everything already recorded is
 -- cleaning, which is why the default and the backfill are both 'cleaning'.
 alter table bk_checklist add column if not exists job_type text not null default 'cleaning';
+
+-- Now that job_type exists, the job type nothing can reach can go. It is
+-- only removed when no service still claims it, so a database that did put
+-- services under it keeps both.
+delete from bk_job_types where id = 'expiry-date' and not exists (
+  select 1 from bk_checklist where job_type = 'expiry-date'
+);
+
 create index if not exists bk_checklist_type on bk_checklist (job_type);
 
 -- A service may name the person responsible for it, the time of day it is due
@@ -327,6 +336,10 @@ alter table bk_checklist add column if not exists locs jsonb;
 update bk_checklist set locs = to_jsonb(array[loc]) where loc is not null and locs is null;
 
 alter table bk_checklist add column if not exists assigned_to text;
+-- The list of people, seeded from the single name a service used to carry.
+-- Only where nobody has set the list yet, so it never overwrites a choice.
+update bk_checklist set assignees = to_jsonb(array[assigned_to])
+ where assigned_to is not null and assignees is null;
 alter table bk_checklist add column if not exists at_time    text;
 alter table bk_checklist add column if not exists end_date   text;
 
