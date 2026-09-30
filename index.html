@@ -13284,11 +13284,11 @@ function alertsSheet() {
 function meSheet() {
   var p = perm();
   var caps = { superadmin: ['Full access to all 8 locations', 'Approve or reject new sign-ups — only you can', 'Approve / reject any cleaning task', 'View & export every report', 'Create users & reset passwords'],
-    exec: ['Full access to all 8 locations', 'Approve / reject any cleaning task', 'View & export every report', 'Create / edit the cleaning checklist', 'Create users & reset passwords'],
-    aexec: ['Full access to all 8 locations', 'Approve / reject any cleaning task', 'View & export every report', 'Create / edit the cleaning checklist', 'Create users & reset passwords'],
-    admin: ['Full access to all 8 locations', 'View & export all reports', 'Create / edit checklists', 'Manage users & roles'],
-    hok: ['View all 8 locations', 'Monitor compliance live', 'Approve / reject cleaning tasks', 'View & export reports'],
-    manager: ['Access to ' + lname(ME.loc) + ' only', 'Approve / reject cleaning', 'Check expiry & labelling', 'Add products & print labels'],
+    exec: ['Full access to all 8 locations', 'Record and send cleaning work for approval', 'View the audit log'],
+    aexec: ['Full access to all 8 locations', 'Record and send cleaning work for approval', 'View the audit log'],
+    admin: ['Full access to all 8 locations', 'Record and send cleaning work for approval', 'View the audit log'],
+    hok: ['View all 8 locations', 'Monitor compliance live', 'Record and send cleaning work for approval'],
+    manager: ['Access to ' + lname(ME.loc) + ' only', 'Record and send cleaning work for approval', 'Check expiry & labelling', 'Add products & print labels'],
     staff: ['Complete assigned tasks', 'Upload photo evidence', 'Add products & check expiry', 'Generate printable labels'],
     auditor: ['Read-only across all 8 locations', 'View compliance reports', 'View photo evidence', 'Export audit reports'] }[ME.role];
   openSheet('Signed in',
@@ -13299,11 +13299,9 @@ function meSheet() {
     caps.map(function (c) { return '<li style="margin:5px 0">' + h(c) + '</li>'; }).join('') + '</ul></div>' +
     '<button class="btn sec" data-a="changePw" style="margin-bottom:10px">🔒 Change my password</button>' +
     (p.manage ? '<button class="btn sec" data-a="cloudSetup" style="margin-bottom:10px">☁️ Cloud sync — ' + h(Cloud.label()) + '</button>' : '') +
-    /* The Super Admin manages everything from the Management menu in the tab
-       bar — offering a second way in here would be a duplicate. Other admins
-       have no Management menu, so they keep these. */
-    (!p.superadmin && p.manage ? '<button class="btn sec" data-a="users" style="margin-bottom:10px">👥 People, roles &amp; passwords</button>' +
-      '<button class="btn sec" data-a="checklist" style="margin-bottom:10px">📋 Cleaning checklist</button>' : '') +
+    /* No way in to people or jobs here: User Management, Job Management and
+       Task Review are the Super Admin's alone, reached from the Management
+       menu, and nobody else is offered a side door to them. */
     (p.manage ? '<button class="btn sec" data-a="activity" style="margin-bottom:10px">🕘 Audit log</button>' : '') +
     /* Emptying the app is the Super Admin's alone, and it sits here rather
        than among the management screens: it is not a way of managing the
@@ -16985,10 +16983,11 @@ document.addEventListener('click', function (ev) {
     case 'tab': closeSheet(); if (x === 'manage' && S.tab !== 'manage') S.manage = 'home'; S.tab = x; render(); break;
     case 'alerts': closeSheet(); alertsSheet(); break;
     case 'me': closeSheet(); meSheet(); break;
-    case 'users': closeSheet(); usersSheet(); break;
-    case 'addUser': closeSheet(); addUserSheet(); break;
-    case 'saveUser': saveUser(); break;
+    case 'users': if (!perm().superadmin) break; closeSheet(); usersSheet(); break;
+    case 'addUser': if (!perm().superadmin) break; closeSheet(); addUserSheet(); break;
+    case 'saveUser': if (!perm().superadmin) break; saveUser(); break;
     case 'delUser': {
+      if (!perm().superadmin) break;
       var du = userById(x); if (!du) break;
       askConfirm('Remove ' + du.name + '?', 'They will no longer be able to sign in. Work they already recorded is kept.', 'Remove', function () {
         Api.del('/api/admin/users/' + encodeURIComponent(du.id)).then(function () {
@@ -17020,7 +17019,7 @@ document.addEventListener('click', function (ev) {
       }, true);
       break;
     }
-    case 'checklist': closeSheet(); checklistSheet(); break;
+    case 'checklist': if (!perm().superadmin) break; closeSheet(); checklistSheet(); break;
     /* Swallows a single click on a cleaning name, so the first click of a
        double-click does not open the job underneath it. */
     case 'cnameHint': ev.stopPropagation(); break;
@@ -17164,7 +17163,7 @@ document.addEventListener('change', function (ev) {
   else if (el.id === 'rf_to') { S.rangeTo = el.value; if (S.rangeTo < S.rangeFrom) S.rangeFrom = S.rangeTo; render(); }
   else if (el.getAttribute && el.getAttribute('data-a') === 'chrole') {
     var u = userById(el.getAttribute('data-x'));
-    if (!u) return;
+    if (!u || !perm().superadmin) return;
     var newRole = el.value, previousRole = u.role;
     var newLoc = ROLES[newRole].all ? null : (u.loc || LOCATIONS[0].id);
 

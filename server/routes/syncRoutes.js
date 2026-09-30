@@ -178,7 +178,8 @@ function acceptRows(req, res, table, rows) {
   return guestCheck.then(function () {
   if (!accepted.length) return res.json({ saved: [], rejected: rejected });
 
-  /* Cleaning jobs from a role without approval rights (Kitchen Staff) are
+  /* Cleaning jobs from a role without approval rights (everyone but the
+     Super Admin) are
      checked field by field against what is stored, so approving, rejecting
      or re-opening a job cannot be done by editing the record on a phone. */
   var checkJobs = req.params.kind === 'tasks' && APPROVER_ROLES.indexOf(req.auth.role) === -1;
@@ -206,8 +207,9 @@ function acceptRows(req, res, table, rows) {
   });
 }
 
-/* Roles allowed to approve and reject cleaning (ROLES[].approve in the app). */
-var APPROVER_ROLES = ['superadmin', 'exec', 'aexec', 'admin', 'hok', 'manager'];
+/* Roles allowed to approve and reject cleaning (ROLES[].approve in the app).
+   Task Review is the Super Admin's alone, so this is too. */
+var APPROVER_ROLES = ['superadmin'];
 
 /* Fields only an approver may change. `approved` is handled on its own,
    because sending a rejected job again legitimately clears it. */

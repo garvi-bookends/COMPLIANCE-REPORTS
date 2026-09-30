@@ -2,10 +2,10 @@
 /* ---------------------------------------------------------------------------
    /api/admin — user administration (reqs 1, 2, 6).
 
-   Every route here is behind requireAuth + requireManager, so only
-   superadmin, exec, aexec and admin accounts can reach them. Approving and
-   rejecting self sign-ups is further limited to the single Super Admin, and
-   only the Super Admin can reset, edit or delete the Super Admin account.
+   Every route here is behind requireAuth + requireSuperadmin. User
+   Management is the Super Admin's alone, the same as in the app: no other
+   role can list, create, edit, reset or remove accounts, or read the
+   sign-in trail.
 
    Endpoints:
      GET    /api/admin/users                    list accounts with login info
@@ -24,7 +24,6 @@ var authService = require('../services/authService');
 var passwords = require('../services/passwordService');
 var config = require('../config/env');
 var requireAuth = require('../middleware/requireAuth');
-var requireManager = require('../middleware/requireRole').requireManager;
 var requireSuperadmin = require('../middleware/requireRole').requireSuperadmin;
 var validate = require('../middleware/validate');
 var asyncHandler = require('../middleware/errorHandler').asyncHandler;
@@ -49,8 +48,8 @@ function protectsSuperadmin(req, res, target) {
   return false;
 }
 
-/* Everything below this line needs a signed-in manager. */
-router.use(requireAuth, requireManager);
+/* Everything below this line needs the signed-in Super Admin. */
+router.use(requireAuth, requireSuperadmin);
 
 /* The admin view of an account. It includes the login bookkeeping from req 6
    — first-login status, last login, creation date — and still no hash. */
