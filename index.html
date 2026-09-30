@@ -16319,14 +16319,28 @@ function ckFormHtml(type) {
 }
 function ckTickNote(type) {
   var n = ckTicked(type), all = ckFormCount();
-  return n + ' of ' + all + ' ticked' + (n < all ? ' \u2014 tick every item to submit' : ' \u2014 ready to submit');
+  return n + ' of ' + all + ' ticked' + (n < all ? ' \u2014 unticked items are recorded as not done' : '');
 }
+/* One boolean per question, in CK_FORM order: what is sent and stored. */
+function ckAnswers(type) {
+  var t = CK.ticks[type] || {};
+  var out = [];
+  for (var k = 0; k < ckFormCount(); k++) out.push(!!t[k]);
+  return out;
+}
+/* How many items a submitted checklist had ticked. Records from before
+   partial submissions carry no false answers, so they count as all ticked. */
+function ckDoneCount(sub) {
+  if (sub && typeof sub.ticked === 'number') return sub.ticked;
+  if (!sub || !sub.answers || !sub.answers.length) return ckFormCount();
+  return sub.answers.filter(function (a) { return a.done; }).length;
+}
+function ckTotalCount(sub) { return sub && typeof sub.total === 'number' ? sub.total : ckFormCount(); }
 function ckTick(type, k, el) {
   var t = CK.ticks[type] || (CK.ticks[type] = {});
   t[k] = !t[k];
   if (el) { el.classList.toggle('on', !!t[k]); el.setAttribute('aria-checked', String(!!t[k])); el.firstChild.textContent = t[k] ? '\u2713' : ''; }
   var note = document.getElementById('ck_count'); if (note) note.textContent = ckTickNote(type);
-  var btn = document.getElementById('ck_submit'); if (btn) btn.disabled = CK.busy || ckTicked(type) < ckFormCount();
 }
 var CK_NET = 'Something went wrong. Please check your connection and try again.';
 var CK_FAIL = 'Unable to open the checklist. Please try again.';
@@ -16414,7 +16428,7 @@ function renderChecklists() {
   CK.cardsHtml = ckCardsHtml();
   html += '<div class="ck-grid" id="ck_cards">' + CK.cardsHtml + '</div>';
   html += '<div class="card sm muted" style="margin-top:12px">Each checklist opens only during its time window. ' +
-    'Press <b>Open Checklist</b>, tick every item and submit.</div>';
+    'Press <b>Open Checklist</b>, tick the items you have done and submit.</div>';
   if (ME.role !== 'staff') html += '<div id="ck_records">' + ckRecordsHtml() + '</div>';
   html += '<div style="height:20px"></div></div>';
   $('#app').innerHTML = html;
@@ -16442,7 +16456,7 @@ function ckCardsHtml() {
     var body, foot = '';
     if (sub) {
       body = '<div class="sm"><b>Submitted at ' + ckTime(sub.submittedAt) + '</b> <span class="muted">· shift of ' + fmtD(sub.shiftDate) + '</span></div>' +
-        '<div class="xs muted">All items ticked and submitted in the app.</div>';
+        '<div class="xs muted">' + ckDoneCount(sub) + ' of ' + ckTotalCount(sub) + ' items ticked.</div>';
     } else if (s.open) {
       body = '<div class="sm"><b style="color:var(--grn)">Available now</b> <span class="muted">· closes at ' +
         CHKW.fmtMinutes(w.end) + ' (in ' + ckIn(s.endsAt - ckNow()) + ')</span></div>';
@@ -16498,7 +16512,7 @@ document.addEventListener('visibilitychange', function () {
   ckPoll();
 });
 
-/* ---------- the checklist sheet: tick every item, then submit ---------- */
+/* ---------- the checklist sheet: tick what is done, then submit ---------- */
 function ckSheet(type, replace) {
   var w = CHKW.byType(type); if (!w) return;
   var s = CHKW.windowState(w, ckNow());
@@ -16527,12 +16541,11 @@ function ckSheet(type, replace) {
       '<div class="sm muted">Choose the kitchen you are at from the location menu at the top of the page, then open the checklist again.</div></div>' +
       '<button class="btn sec" data-a="closeSheet">Choose kitchen</button>';
   } else {
-    var all = ckTicked(type) >= ckFormCount();
-    body += '<div class="card sm muted" style="margin-top:12px">Tick every item as you complete it. The checklist can be submitted only when all ' + ckFormCount() + ' are ticked.</div>' +
+    body += '<div class="card sm muted" style="margin-top:12px">Tick each item as you complete it. You can submit at any time; any item left unticked is recorded as not done.</div>' +
       ckFormHtml(type) +
       '<div id="ck_count" class="sm b center" style="margin:14px 0 6px">' + ckTickNote(type) + '</div>' +
       '<div id="ck_err" class="ck-err" role="alert">' + h(CK.err[type] || '') + '</div>' +
-      '<button id="ck_submit" class="btn" data-a="ckSubmit" data-x="' + type + '"' + (CK.busy || !all ? ' disabled' : '') + '>' +
+      '<button id="ck_submit" class="btn" data-a="ckSubmit" data-x="' + type + '"' + (CK.busy ? ' disabled' : '') + '>' +
       (CK.busy ? 'Submitting\u2026' : 'Submit checklist') + '</button>';
   }
   if (replace && SHEET_STACK.length) SHEET_STACK.pop();
@@ -16573,7 +16586,7 @@ function ckDoneHtml(type, sub) {
   var w = CHKW.byType(type);
   return '<div class="card center"><div style="font-size:40px">\u2705</div>' +
     '<div class="b" style="font-size:17px">' + h(w.label) + ' completed</div>' +
-    '<div class="sm muted">All ' + ckFormCount() + ' items ticked by ' + h(sub.userName || ME.name) + ' at ' + ckTime(sub.submittedAt) + ' IST \u00b7 shift of ' + fmtD(sub.shiftDate) + '</div></div>' +
+    '<div class="sm muted">' + ckDoneCount(sub) + ' of ' + ckTotalCount(sub) + ' items ticked by ' + h(sub.userName || ME.name) + ' at ' + ckTime(sub.submittedAt) + ' IST \u00b7 shift of ' + fmtD(sub.shiftDate) + '</div></div>' +
     ckAnswersHtml(sub.answers) +
     '<button class="btn sec" data-a="closeSheet">Close</button>';
 }
@@ -16581,14 +16594,14 @@ function ckDoneHtml(type, sub) {
 function ckSubmit(type) {
   var w = CHKW.byType(type);
   if (!w || CK.busy) return;
-  /* Application validation. The server repeats the time check. */
-  if (ckTicked(type) < ckFormCount()) { CK.err[type] = 'Please tick every item before submitting.'; ckSheet(type, true); return; }
+  /* Application validation. The server repeats the time check. Items may be
+     left unticked: they are sent, and stored, as not done. */
   if (!CHKW.windowState(w, ckNow()).open) { ckSheet(type, true); return; }
   if (Auth.offline || !Api.token || navigator.onLine === false) { CK.err[type] = CK_NET; ckSheet(type, true); return; }
 
   CK.busy = true; CK.err[type] = ''; ckSheet(type, true);
   (function () {
-    Api.post('/api/checklists', { type: type, loc: ckLoc(), answers: CK_FORM.reduce(function (a, g) { return a.concat(g[1].map(function () { return true; })); }, []) }).then(function (data) {
+    Api.post('/api/checklists', { type: type, loc: ckLoc(), answers: ckAnswers(type) }).then(function (data) {
       CK.busy = false;
       CK.done[type] = { checklist: data.checklist };
       delete CK.ticks[type];
@@ -16670,6 +16683,11 @@ function ckPaintRecords() {
   var el = document.getElementById('ck_records');
   if (el && S.tab === 'chk') el.innerHTML = ckRecordsHtml();
 }
+/* "20/24", in orange when items were left unticked. */
+function ckTickedCell(r) {
+  var n = ckDoneCount(r), all = ckTotalCount(r);
+  return '<span class="b" style="color:' + (n < all ? 'var(--org)' : 'var(--grn)') + '">' + n + '/' + all + '</span>';
+}
 function ckRecordsHtml() {
   var d = ckRecDates(), rows = ckCached(d[0], d[1], ckScopeLoc());
   var html = '<div class="sec-t">Checklist records</div><div class="chips">' +
@@ -16688,14 +16706,15 @@ function ckRecordsHtml() {
     statCard(n.AVAILABLE, 'Open now', 'var(--yel)') + '</div>';
   if (!all.length) return html + '<div class="card empty" style="margin-top:12px"><div class="ic">📋</div>No checklists yet for this period.</div>';
   html += '<div class="card pad0" style="margin-top:12px"><div class="scroll-x"><table class="tbl">' +
-    '<tr><th>User</th><th>Checklist</th><th>Location</th><th>Date</th><th>Time</th><th>Status</th></tr>' +
+    '<tr><th>User</th><th>Checklist</th><th>Location</th><th>Date</th><th>Time</th><th>Ticked</th><th>Status</th></tr>' +
     all.slice(0, 400).map(function (r) {
       return '<tr' + (r.gap ? '' : ' data-a="ckView" data-x="' + h(r.id) + '" style="cursor:pointer"') + '><td><b>' + (r.gap ? '<span class="muted">—</span>' : h(r.userName)) + '</b></td>' +
         '<td>' + CK_STYLE[r.type].short + '</td><td class="xs">' + (r.loc ? h(lname(r.loc)) : '—') + '</td>' +
         '<td style="white-space:nowrap">' + fmtD(r.shiftDate) + '</td><td style="white-space:nowrap">' + (r.gap ? '—' : ckTime(r.submittedAt)) + '</td>' +
+        '<td style="white-space:nowrap">' + (r.gap ? '—' : ckTickedCell(r)) + '</td>' +
         '<td>' + ckStatusPill(r.status) + '</td></tr>';
     }).join('') + '</table></div></div>' +
-    '<div class="card sm muted" style="margin-top:12px">“Submitted” means the user ticked every item and submitted the checklist in the app inside the time window. Tap a submitted row to see every item.</div>';
+    '<div class="card sm muted" style="margin-top:12px">“Submitted” means the user submitted the checklist in the app inside the time window. “Ticked” shows how many items they ticked; the rest were left not done. Tap a submitted row to see every item.</div>';
   return html;
 }
 /* ---------- Reports tab: checklist completion per kitchen ---------- */
@@ -16749,10 +16768,10 @@ function ckReportPaint() { var el = document.getElementById('rep_ck'); if (el &&
 function ckCsv() {
   var all = ckReportRows();
   if (!all) { toast('Checklist data is still loading'); return; }
-  var rows = [['User', 'Checklist', 'Location', 'Date', 'Submitted (IST)', 'Status']];
+  var rows = [['User', 'Checklist', 'Location', 'Date', 'Submitted (IST)', 'Ticked', 'Status']];
   all.forEach(function (r) {
     rows.push([r.gap ? '' : r.userName, CHKW.byType(r.type).label, r.loc ? lname(r.loc) : '', r.shiftDate,
-      r.gap ? '' : ckTime(r.submittedAt), r.status]);
+      r.gap ? '' : ckTime(r.submittedAt), r.gap ? '' : ckDoneCount(r) + '/' + ckTotalCount(r), r.status]);
   });
   var csv = rows.map(function (r) { return r.map(function (c) { return '"' + String(c).replace(/"/g, '""') + '"'; }).join(','); }).join('\n');
   var a = document.createElement('a');

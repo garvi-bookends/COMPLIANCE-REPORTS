@@ -3,7 +3,8 @@
    /api/checklists — Lunch, Dinner and Closing checklists.
 
    The flow is: the user submits, the server checks the time window and
-   records who sent the checklist with every item ticked. There is no Google
+   records who sent the checklist and which items they ticked (items may be
+   left unticked). There is no Google
    Form and no photo: the answers are stored here, in app_checklists. The
    window is decided HERE, from the server's clock in IST. The browser's clock
    and the browser's opinion of "open" are never trusted, so changing the

@@ -33,6 +33,9 @@ function toApi(row, opts) {
   if (!row) return null;
   /* Lists stay small: the ticked answers come with the single record. */
   var full = !(opts && opts.list);
+  /* Items may be left unticked, so every record says how many were ticked.
+     Records without answers predate that and were all ticked. */
+  var a = Array.isArray(row.answers) ? row.answers : null;
   return {
     id: row.id,
     userId: row.user_id,
@@ -43,6 +46,8 @@ function toApi(row, opts) {
     startTime: ms(row.start_time),
     endTime: ms(row.end_time),
     answers: full ? (row.answers || null) : undefined,
+    ticked: a ? a.filter(function (x) { return x && x.done; }).length : null,
+    total: a ? a.length : null,
     status: row.status,
     submittedAt: ms(row.submitted_at),
     createdAt: ms(row.created_at)

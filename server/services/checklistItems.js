@@ -44,17 +44,18 @@ SECTIONS.forEach(function (s) {
   s[1].forEach(function (q) { ITEMS.push({ section: s[0], question: q }); });
 });
 
-/* `answers` must be one boolean per question, all true. Resolves to the
-   record to store, or an error message. */
+/* `answers` must be one boolean per question: true for ticked, false for
+   left unticked. A checklist may be sent with items left unticked; the
+   record says which. Resolves to the record to store, or an error message. */
 function check(answers) {
   if (!Array.isArray(answers) || answers.length !== ITEMS.length) {
-    return { error: 'Please tick every item before submitting.' };
+    return { error: 'The checklist is out of date. Please reload the page and try again.' };
   }
   for (var i = 0; i < answers.length; i++) {
-    if (answers[i] !== true) return { error: 'Please tick every item before submitting.' };
+    if (typeof answers[i] !== 'boolean') return { error: 'The checklist is out of date. Please reload the page and try again.' };
   }
-  return { answers: ITEMS.map(function (it) {
-    return { section: it.section, question: it.question, done: true };
+  return { answers: ITEMS.map(function (it, i) {
+    return { section: it.section, question: it.question, done: answers[i] };
   }) };
 }
 
