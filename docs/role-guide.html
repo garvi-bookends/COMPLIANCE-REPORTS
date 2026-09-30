@@ -1,0 +1,482 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Bookends Kitchen Compliance — Role Guide</title>
+<style>
+  @page {
+    size: A4;
+    margin: 18mm 16mm 20mm 16mm;
+    @bottom-center { content: "Bookends Kitchen Compliance · Role Guide · page " counter(page); font: 8.5pt "Segoe UI", Arial, sans-serif; color: #7a847e; }
+  }
+  @page :first { @bottom-center { content: none; } }
+
+  :root { --brand: #0b3d2e; --brand2: #15694f; --ink: #1d2320; --mut: #5e6a64; --line: #d9ded9; --soft: #f3f6f3; --org: #b86200; --red: #b3261e; --grn: #1f7a45; }
+  * { box-sizing: border-box; }
+  body { font: 10.5pt/1.5 "Segoe UI", Arial, sans-serif; color: var(--ink); margin: 0; }
+  h1, h2, h3, h4 { color: var(--brand); line-height: 1.25; margin: 0; }
+  h2 { font-size: 17pt; margin: 0 0 10pt; padding-bottom: 5pt; border-bottom: 2px solid var(--brand); break-after: avoid; }
+  h3 { font-size: 12.5pt; margin: 16pt 0 6pt; break-after: avoid; }
+  h4 { font-size: 10.5pt; margin: 11pt 0 4pt; color: var(--ink); break-after: avoid; }
+  p { margin: 0 0 7pt; }
+  ul, ol { margin: 0 0 8pt; padding-left: 18pt; }
+  li { margin: 2pt 0; }
+  section { break-before: page; }
+  .muted { color: var(--mut); }
+  .small { font-size: 9pt; }
+  b { font-weight: 600; }
+
+  table { width: 100%; border-collapse: collapse; margin: 6pt 0 10pt; font-size: 9.5pt; break-inside: auto; }
+  thead { display: table-header-group; }
+  tr { break-inside: avoid; }
+  th { background: var(--brand); color: #fff; text-align: left; font-weight: 600; padding: 5pt 6pt; }
+  td { padding: 4.5pt 6pt; border-bottom: 1px solid var(--line); vertical-align: top; }
+  tbody tr:nth-child(even) td { background: var(--soft); }
+  td.c, th.c { text-align: center; }
+  .y { color: var(--grn); font-weight: 700; }
+  .n { color: #b9c0bb; }
+  .own { color: var(--org); font-weight: 600; }
+
+  .path { display: inline-block; background: #eef3ef; border: 1px solid #cfdcd3; border-radius: 4px; padding: 0 5pt; font-size: 9.5pt; white-space: nowrap; }
+  .note { background: #fff6e5; border-left: 4px solid #e0a43a; padding: 7pt 10pt; margin: 8pt 0 10pt; break-inside: avoid; }
+  .tip { background: #eaf5ee; border-left: 4px solid var(--grn); padding: 7pt 10pt; margin: 8pt 0 10pt; break-inside: avoid; }
+  .card { border: 1px solid var(--line); border-radius: 6px; padding: 9pt 11pt; margin: 0 0 9pt; break-inside: avoid; }
+  .card h4 { margin-top: 0; }
+  .twocol { display: grid; grid-template-columns: 1fr 1fr; gap: 9pt; }
+  .role-head { display: flex; align-items: baseline; gap: 10pt; flex-wrap: wrap; }
+  .role-tag { background: var(--brand); color: #fff; border-radius: 12px; padding: 1pt 9pt; font-size: 9pt; font-weight: 600; }
+  .role-tag.alt { background: #eef3ef; color: var(--brand); border: 1px solid #cfdcd3; }
+
+  .flow { display: flex; align-items: stretch; gap: 0; margin: 8pt 0 12pt; break-inside: avoid; }
+  .step { flex: 1; border: 1px solid #cfdcd3; background: #f7faf7; border-radius: 6px; padding: 7pt 8pt; font-size: 9.2pt; }
+  .step b { display: block; color: var(--brand); margin-bottom: 2pt; }
+  .arrow { align-self: center; padding: 0 4pt; color: var(--brand2); font-size: 14pt; }
+
+  /* cover */
+  .cover { height: 250mm; display: flex; flex-direction: column; justify-content: space-between; }
+  .cover-top { background: linear-gradient(135deg, var(--brand), var(--brand2)); color: #fff; border-radius: 10px; padding: 34pt 28pt; }
+  .cover-top .k { letter-spacing: 3px; font-size: 10pt; font-weight: 700; opacity: .85; }
+  .cover-top h1 { color: #fff; font-size: 30pt; margin: 12pt 0 8pt; }
+  .cover-top p { font-size: 12.5pt; opacity: .92; margin: 0; }
+  .toc { columns: 1; }
+  .toc ol { padding-left: 16pt; font-size: 11pt; }
+  .toc li { margin: 5pt 0; }
+  .toc .sub { color: var(--mut); font-size: 9.5pt; }
+  .meta td { border: 0; padding: 2pt 8pt 2pt 0; background: none !important; }
+</style>
+</head>
+<body>
+
+<!-- ============================================================ COVER -->
+<div class="cover">
+  <div>
+    <div class="cover-top">
+      <div class="k">BOOKENDS KITCHEN OPERATIONS &amp; COMPLIANCE</div>
+      <h1>Role Guide</h1>
+      <p>What each role can do in the app, how to do it, and how it shows up for everyone else.</p>
+    </div>
+    <table class="meta" style="margin-top:18pt;width:auto">
+      <tr><td class="muted">For</td><td>Everyone who uses the app — head office, kitchen managers and kitchen staff</td></tr>
+      <tr><td class="muted">Version</td><td>19 September 2026</td></tr>
+      <tr><td class="muted">Kitchens</td><td>8 — Surat: Surat Prep Kitchen, Capiche Piplod, Capiche Vesu, Aiko Pal · Ahmedabad: Ahmedabad Prep Kitchen, Capiche Ambli, Capiche Uni, Aiko Ambli</td></tr>
+    </table>
+  </div>
+
+  <div class="toc">
+    <h3 style="margin-top:0">Contents</h3>
+    <ol>
+      <li>The 8 roles at a glance</li>
+      <li>What everyone can do <span class="sub">— signing in, passwords, sign-up, offline</span></li>
+      <li>Role by role <span class="sub">— Super Admin, Execution Heads, Admin, Head of Kitchen, Location Manager, Kitchen Staff, Auditor</span></li>
+      <li>How work moves between accounts <span class="sub">— cleaning jobs, products, timing</span></li>
+      <li>Admin use cases <span class="sub">— step-by-step for common situations</span></li>
+      <li>The cleaning schedule</li>
+      <li>Appendix — permission table and glossary</li>
+    </ol>
+    <p class="muted small" style="margin-top:14pt">"Profile" in this guide means the round button with your initials at the top right of every screen. Paths are written like <span class="path">Profile → 🔒 Change my password</span>.</p>
+  </div>
+</div>
+
+<!-- ============================================================ 1. AT A GLANCE -->
+<section>
+<h2>1. The 8 roles at a glance</h2>
+<p>Every account has exactly one role. The role decides which kitchens you see and which buttons you get. Head-office roles see all 8 kitchens; a Location Manager and Kitchen Staff see only their own kitchen.</p>
+
+<table>
+  <thead><tr><th style="width:21%">Role</th><th style="width:27%">Who it is for</th><th style="width:14%">Kitchens</th><th>Main powers</th></tr></thead>
+  <tbody>
+    <tr><td><b>Super Admin</b></td><td>The one owner of the system (Husen)</td><td>All 8</td><td>Everything an Execution Head can do, plus: approve or reject new sign-ups, answer "forgot password" requests, the User Management panel. There is only ever one.</td></tr>
+    <tr><td><b>Execution Head</b></td><td>Senior head office</td><td>All 8</td><td>Approve / reject cleaning, all reports, create and remove users, change roles, reset passwords.</td></tr>
+    <tr><td><b>Assistant Execution Head</b></td><td>Head office</td><td>All 8</td><td>Same as Execution Head.</td></tr>
+    <tr><td><b>Admin</b></td><td>Head-office administration</td><td>All 8</td><td>Same as Execution Head.</td></tr>
+    <tr><td><b>Head of Kitchen</b></td><td>Culinary lead across kitchens</td><td>All 8</td><td>Approve / reject cleaning, record cleaning and products anywhere, all reports. Cannot manage people.</td></tr>
+    <tr><td><b>Location Manager</b></td><td>The manager of one kitchen</td><td class="own">Own only</td><td>Do and approve cleaning, products and labels for their kitchen; their kitchen's reports.</td></tr>
+    <tr><td><b>Kitchen Staff</b></td><td>Everyone working in a kitchen</td><td class="own">Own only</td><td>Do cleaning jobs with a photo, add and label products, check expiry. Simple home screen, no Reports.</td></tr>
+    <tr><td><b>Auditor</b></td><td>Inspectors, auditors</td><td>All 8</td><td>Read-only: sees everything, reports and photos, but cannot change anything.</td></tr>
+  </tbody>
+</table>
+
+<h3>The Super Admin</h3>
+<p>The Super Admin is the single account that decides who gets into the system. It cannot be given from inside the app — no form offers it — and it is set only by IT on the server. If it is moved to someone else, the previous Super Admin automatically becomes an Execution Head. Nobody else can reset, edit or remove the Super Admin account.</p>
+
+<h3>How the kitchen score works</h3>
+<p>Each kitchen gets a score out of 100 every week: <b>40% cleaning</b> (jobs done <i>and approved</i>), <b>35% expiry control</b>, <b>25% labelling</b>. A cleaning job only counts once a manager or head office has approved it.</p>
+</section>
+
+<!-- ============================================================ 2. EVERYONE -->
+<section>
+<h2>2. What everyone can do</h2>
+
+<div class="card">
+<h4>Sign in</h4>
+<ol>
+  <li>Open the app and type your <b>User ID</b> (usually your first name in lower case, e.g. <i>rahul</i>) and password.</li>
+  <li>Tap <b>Sign in</b>. You stay signed in on that phone until you log out.</li>
+</ol>
+<p class="small muted">Signing in needs an internet connection. A wrong ID and a wrong password give the same message, on purpose.</p>
+</div>
+
+<div class="card">
+<h4>First sign-in — choose your own password</h4>
+<p>New accounts start with the password <b>1234</b>. The first time you sign in, the app stops at <b>Choose your password</b> and you cannot continue until you set your own.</p>
+<ul>
+  <li>At least <b>8 characters</b>, and it cannot be 1234.</li>
+  <li>Keep it to yourself — everything you do is recorded under your name.</li>
+</ul>
+</div>
+
+<div class="card">
+<h4>Change your password</h4>
+<ol>
+  <li><span class="path">Profile → 🔒 Change my password</span></li>
+  <li>Type your <b>current</b> password, then the new one twice, and tap <b>Save new password</b>.</li>
+</ol>
+<p class="small"><b>Effect:</b> every other phone where you were signed in is signed out. The phone you used stays signed in.</p>
+</div>
+
+<div class="card">
+<h4>Forgot your password</h4>
+<ol>
+  <li>On the sign-in screen tap <b>Forgot password?</b>, type your User ID, tap <b>Ask for a new password</b>.</li>
+  <li>The request goes to the <b>Super Admin</b>, who sets a temporary password and tells you what it is.</li>
+  <li>Sign in with the temporary password; the app then makes you choose your own.</li>
+</ol>
+<p class="small muted">The screen says the same thing whether or not the ID exists, so it cannot be used to find out who has an account.</p>
+</div>
+
+<div class="card">
+<h4>Create your own account (new starters)</h4>
+<ol>
+  <li>On the sign-in screen tap <b>New here? Create your own account</b>.</li>
+  <li>Enter your name, choose a username and password, and pick your kitchen.</li>
+  <li>Your account is <b>waiting for approval</b>. You cannot sign in until the Super Admin approves it and sets your role and kitchen. (Trying earlier shows "waiting for approval".)</li>
+</ol>
+</div>
+
+<div class="twocol">
+<div class="card">
+<h4>Too many wrong passwords</h4>
+<p>After <b>8</b> wrong passwords in a row the account is locked for <b>15 minutes</b>. The message says how long. To get in sooner, ask Husen, Manish or Rutvik to reset your password — a reset also unlocks the account.</p>
+</div>
+<div class="card">
+<h4>Working offline</h4>
+<p>Once signed in, the app keeps working without internet. Cleaning jobs, photos and products are saved on the phone and upload automatically when the connection returns. A grey bar says "No internet — your work is being saved".</p>
+</div>
+</div>
+
+<div class="twocol">
+<div class="card">
+<h4>Notifications (the bell)</h4>
+<p>Everyone has the bell. It lists, for the kitchens you can see: overdue cleaning, missing photos, rejected jobs, jobs awaiting approval, expired and soon-to-expire products, and missing labels. "Mark all as read" only affects your own phone.</p>
+</div>
+<div class="card">
+<h4>Log out</h4>
+<p><span class="path">Profile → Log out</span>. This also ends the session on the server, so the phone cannot be used to get back in without the password.</p>
+</div>
+</div>
+</section>
+
+<!-- ============================================================ 3. ROLE BY ROLE -->
+<section>
+<h2>3. Role by role</h2>
+<p>Each role below lists what you see, what you can do and how, and what you cannot do. Head-office roles share a lot, so later sections refer back to earlier ones.</p>
+
+<!-- Super Admin -->
+<h3><span class="role-head">Super Admin <span class="role-tag">All 8 kitchens</span> <span class="role-tag alt">One account only</span></span></h3>
+<p><b>You see:</b> the full dashboard; a <b>User Management</b> button in the menu with a red number when something needs you; Home cards for new sign-ups and password requests.</p>
+<p><b>Everything an Execution Head can do</b> (next section), plus these, which only you can do:</p>
+<table>
+  <thead><tr><th style="width:32%">Task</th><th>How</th></tr></thead>
+  <tbody>
+    <tr><td>Approve a new sign-up</td><td><span class="path">Profile → 👥 People, roles &amp; passwords</span> → "Waiting for approval" → choose their <b>role</b> and <b>kitchen</b> → ✓. They can sign in straight away.</td></tr>
+    <tr><td>Reject a sign-up</td><td>Same list → ✕. The account is deleted.</td></tr>
+    <tr><td>Answer a "forgot password" request</td><td><span class="path">User Management</span> → "Password reset requests" → <b>🔑 Set new password</b> → type a temporary one (or leave blank for 1234). The username and password are shown <b>once</b> — give them to the person.</td></tr>
+    <tr><td>Dismiss a request</td><td>Same row → ✕ (when no reset is needed). Their password is unchanged.</td></tr>
+    <tr><td>See every account</td><td><span class="path">User Management</span> → "All accounts": name, username, role, kitchen, last sign-in, and whether their password is still temporary.</td></tr>
+    <tr><td>Set a password for anyone</td><td><span class="path">User Management</span> → their row → <b>🔑 Set new password</b>.</td></tr>
+    <tr><td>Remove someone who has left</td><td><span class="path">User Management</span> → their row → <b>✕ Remove</b> → confirm "Yes, remove" → OK.</td></tr>
+  </tbody>
+</table>
+<div class="note"><b>Passwords are never visible</b> — not even to the Super Admin. They are stored scrambled (one-way). To get someone back in, you set a new temporary password; they must change it at their next sign-in.</div>
+<p><b>You cannot:</b> remove yourself, or change your own role from the app. Moving the Super Admin role is done by IT on the server.</p>
+
+<!-- Exec / Aexec / Admin -->
+<h3><span class="role-head">Execution Head · Assistant Execution Head · Admin <span class="role-tag">All 8 kitchens</span></span></h3>
+<p>These three roles have the same abilities.</p>
+<h4>Dashboard and reports</h4>
+<ul>
+  <li><b>Home:</b> overall score, kitchen league table, Surat vs Ahmedabad, the "every Tuesday" card, key numbers (expired, pending, rejected, missing photos, urgent alerts). Tap a kitchen for its detail.</li>
+  <li>The kitchen picker at the top includes <b>All 8 locations</b> on Home and Reports.</li>
+  <li><b>Reports tab:</b> kitchen-by-kitchen scores, violations, staff compliance and photo evidence. <b>🖨 Print / PDF</b> or <b>⤓ Export CSV</b> (opens in Excel).</li>
+</ul>
+<h4>Cleaning, products, labels</h4>
+<ul>
+  <li>Approve or reject any kitchen's cleaning jobs — see <i>Location Manager</i> for the steps. Home shows <b>☑ Approvals (n)</b>.</li>
+  <li>Can also do cleaning jobs and add products at any kitchen.</li>
+</ul>
+<h4>People</h4>
+<table>
+  <thead><tr><th style="width:32%">Task</th><th>How</th></tr></thead>
+  <tbody>
+    <tr><td>Create a user</td><td><span class="path">Profile → 👥 People, roles &amp; passwords → ＋ Create a new user</span> → name (Login ID fills in), role, kitchen → Create. The ID and starting password are shown once.</td></tr>
+    <tr><td>Change someone's role</td><td>People → the role dropdown on their row. Takes effect on their phone within about 15 minutes, or when they reopen the app.</td></tr>
+    <tr><td>Reset a forgotten password</td><td>People → 🔑 on their row. Their password goes back to <b>1234</b> and they must choose a new one; they are signed out everywhere.</td></tr>
+    <tr><td>Remove someone who has left</td><td>People → ✕ on their row → confirm.</td></tr>
+    <tr><td>Other</td><td><span class="path">Profile → ☁️ Cloud sync</span> (status, Sync now), <span class="path">📋 Cleaning checklist</span> (view the full list of jobs), <span class="path">🕘 Recent activity</span>.</td></tr>
+  </tbody>
+</table>
+<p><b>You cannot:</b> approve or reject sign-ups (you see the names, marked "Only the Super Admin can approve"); see the "forgot password" queue; change, reset or remove the Super Admin; demote or remove yourself; remove or demote the last account that can manage people.</p>
+<div class="note"><b>Recent activity</b> shows actions taken <b>on your own phone</b> only. It is not a shared log of what staff did on theirs — for that, use Reports.</div>
+</section>
+
+<section>
+<!-- HoK -->
+<h3 style="margin-top:0"><span class="role-head">Head of Kitchen <span class="role-tag">All 8 kitchens</span></span></h3>
+<ul>
+  <li>Same dashboard, alerts and Reports as head office, across all kitchens.</li>
+  <li><b>Approve / reject</b> cleaning jobs anywhere; do cleaning jobs; add, edit and label products anywhere.</li>
+  <li><b>Cannot</b> manage people: no People screen, no User Management, cannot reset passwords.</li>
+</ul>
+
+<!-- Manager -->
+<h3><span class="role-head">Location Manager <span class="role-tag alt">Own kitchen only</span></span></h3>
+<p><b>You see:</b> your kitchen's dashboard, a "Needs action this week" list, the bell, and Reports for your kitchen. New weekly and monthly jobs are assigned to you by default.</p>
+<table>
+  <thead><tr><th style="width:32%">Task</th><th>How</th></tr></thead>
+  <tbody>
+    <tr><td>Approve a finished job</td><td><span class="path">Cleaning</span> → chip <b>To approve</b> (or Home → ☑ Approvals) → open the job → check the photo → <b>Approve</b>. It now counts towards the score.</td></tr>
+    <tr><td>Reject a job</td><td>Same screen → <b>Reject</b> → type the reason (e.g. "grease still on the hood") → it goes back to the kitchen with the reason in red.</td></tr>
+    <tr><td>Do a cleaning job yourself</td><td>As for Kitchen Staff (below). You can also approve it.</td></tr>
+    <tr><td>Products, labels, expiry</td><td>As for Kitchen Staff, for your kitchen.</td></tr>
+    <tr><td>Reports</td><td><span class="path">Reports</span> → your kitchen → Print / PDF or Export CSV.</td></tr>
+  </tbody>
+</table>
+<p><b>You cannot:</b> see other kitchens, manage people, or reset passwords (ask head office).</p>
+
+<!-- Staff -->
+<h3><span class="role-head">Kitchen Staff <span class="role-tag alt">Own kitchen only</span></span></h3>
+<p><b>You see:</b> a simple home with four big buttons — <b>Cleaning</b>, <b>Label a product</b>, <b>Check expiry</b>, <b>Scan a label</b> — plus this week's jobs and a "Throw these away" list. Four tabs: Home, Cleaning, Expiry, Labels (no Reports).</p>
+<table>
+  <thead><tr><th style="width:32%">Task</th><th>How</th></tr></thead>
+  <tbody>
+    <tr><td>Do a cleaning job</td><td><span class="path">Cleaning</span> → tap a job → clean the area → <b>tap the photo box</b> and take a photo → <b>✓ Done — send for approval</b>. The green button only appears after a photo.</td></tr>
+    <tr><td>A job came back rejected</td><td>It shows <b>REJECTED</b> with the manager's reason. Fix it, take a new photo, tap Done again.</td></tr>
+    <tr><td>Add and label a product</td><td><span class="path">Home → Label a product</span> (or Expiry → ＋ Add product) → photo → name, batch, dates, storage → Save → the label opens → <b>🖨 Print this label</b> → stick it on → <b>✓ I have written it and stuck it on</b>.</td></tr>
+    <tr><td>Check expiry</td><td><span class="path">Expiry</span>. <span style="color:var(--red)"><b>Red</b></span> = throw away today; <span style="color:var(--org)"><b>orange</b></span> = use within 7 days; yellow = within 30 days. Check at the start of every shift.</td></tr>
+    <tr><td>Scan a label</td><td><span class="path">Home → Scan a label</span> → point the camera at the QR code → the product opens.</td></tr>
+  </tbody>
+</table>
+<ul class="small">
+  <li>You can record <b>any</b> job in your kitchen, not only ones assigned to you. The chip <b>My jobs</b> shows jobs assigned to you.</li>
+  <li>Each job needs <b>one</b> photo. It is stamped with the date, time and your initials.</li>
+  <li>You <b>cannot</b> approve jobs ("Waiting for manager approval"), see other kitchens or open Reports.</li>
+</ul>
+
+<!-- Auditor -->
+<h3><span class="role-head">Auditor <span class="role-tag">All 8 kitchens</span> <span class="role-tag alt">Read-only</span></span></h3>
+<ul>
+  <li>Sees the full dashboard, the bell, every kitchen's cleaning jobs, products and photos, and all Reports (including Print / PDF and CSV).</li>
+  <li>Home shows <b>📄 Open reports</b> instead of "Do a clean / Add product".</li>
+  <li><b>Cannot change anything:</b> no photo taking, no Done, no Approve / Reject, no adding or editing products. The server refuses changes from an Auditor account even if attempted.</li>
+</ul>
+</section>
+
+<!-- ============================================================ 4. FLOWS -->
+<section>
+<h2>4. How work moves between accounts</h2>
+<p>All phones share one copy of the data through the Bookends server. What one person does appears on everyone else's phone who can see that kitchen.</p>
+
+<h3>A cleaning job, from start to score</h3>
+<div class="flow">
+  <div class="step"><b>1 · Job appears</b>Created automatically for the week or month, assigned to the kitchen's manager. Status PENDING.</div>
+  <div class="arrow">→</div>
+  <div class="step"><b>2 · Staff does it</b>Photo + <i>Done — send for approval</i>. Status AWAITING OK.</div>
+  <div class="arrow">→</div>
+  <div class="step"><b>3 · Manager sees it</b>"To approve" count, Home ☑ Approvals, and an "Awaiting approval" alert.</div>
+  <div class="arrow">→</div>
+  <div class="step"><b>4a · Approve</b>Status APPROVED, with who approved it and when. Cleaning % and the kitchen score go up for everyone.</div>
+</div>
+<div class="flow">
+  <div class="step" style="flex:0 0 48%;margin-left:52%"><b>4b · Reject (with reason)</b>Status REJECTED. The kitchen gets a "Task rejected" alert with the reason; the job can be done and sent again.</div>
+</div>
+<ul>
+  <li>If the due date passes while a job is still pending, it shows <b>OVERDUE</b> and raises an alert.</li>
+  <li><b>Re-open</b> (↺) puts a finished job back to pending — use it if something was marked done by mistake. Only roles that can approve can re-open, and once a job is approved kitchen staff can no longer change it or its photo.</li>
+</ul>
+
+<h3>A product, from delivery to bin</h3>
+<div class="flow">
+  <div class="step"><b>1 · Add</b>Photo, name, batch, dates, storage place.</div>
+  <div class="arrow">→</div>
+  <div class="step"><b>2 · Label</b>Print, stick on, confirm "stuck it on". Until then: "Label missing" alert.</div>
+  <div class="arrow">→</div>
+  <div class="step"><b>3 · Watch expiry</b>7 days left → orange + alert. Past date → red + "Product expired".</div>
+  <div class="arrow">→</div>
+  <div class="step"><b>4 · Discard</b>Remove it. It disappears from every phone.</div>
+</div>
+
+<h3>Accounts</h3>
+<table>
+  <thead><tr><th style="width:36%">When this happens…</th><th>…this is the effect on the other person</th></tr></thead>
+  <tbody>
+    <tr><td>An admin creates an account</td><td>They can sign in with the ID and 1234, and must choose a password first.</td></tr>
+    <tr><td>Someone signs up themselves</td><td>The Super Admin's menu badge and Home card count go up within a minute. They cannot sign in until approved.</td></tr>
+    <tr><td>Someone taps "Forgot password"</td><td>Appears on the Super Admin's User Management panel, Home card and badge.</td></tr>
+    <tr><td>A password is reset (by anyone)</td><td>The person is signed out on every phone and must choose a new password. Any "forgot password" request for them is cleared.</td></tr>
+    <tr><td>A role is changed</td><td>Applies on their phone within about 15 minutes, or immediately if they close and reopen the app.</td></tr>
+    <tr><td>An account is removed</td><td>They cannot sign in again. Work they already recorded is kept.</td></tr>
+  </tbody>
+</table>
+
+<h3>How fast things appear</h3>
+<table>
+  <thead><tr><th style="width:36%">Change</th><th>When other phones see it</th></tr></thead>
+  <tbody>
+    <tr><td>Cleaning job done, approved, rejected; product added or changed</td><td>Uploaded within about a second; other phones pick it up within about <b>45 seconds</b>, or as soon as the app is opened or brought back to the front.</td></tr>
+    <tr><td>Anything done offline</td><td>Uploads automatically when the phone is back online, even if the app was closed in between.</td></tr>
+    <tr><td>Photos</td><td>Uploaded to the Bookends server; a photo taken offline uploads once the connection returns.</td></tr>
+    <tr><td>New sign-ups / password requests (Super Admin)</td><td>Checked every minute while the app is open.</td></tr>
+    <tr><td>Role change, removal</td><td>Within about 15 minutes, or on reopening the app.</td></tr>
+  </tbody>
+</table>
+</section>
+
+<!-- ============================================================ 5. USE CASES -->
+<section>
+<h2>5. Admin use cases</h2>
+<p>Step-by-step for the situations head office handles most. "Admin" here means Super Admin, Execution Head, Assistant Execution Head or Admin unless a step says otherwise.</p>
+
+<div class="card"><h4>A. A new staff member joins</h4>
+<ol>
+  <li><span class="path">Profile → 👥 People, roles &amp; passwords → ＋ Create a new user</span></li>
+  <li>Type their name — the Login ID fills in (change it if you like: lower-case letters and numbers).</li>
+  <li>Role: <b>Kitchen Staff</b>; kitchen: theirs. Leave the password blank for 1234. Tap <b>Create user</b>.</li>
+  <li>Give them the Login ID and password shown on screen. On first sign-in they choose their own.</li>
+</ol></div>
+
+<div class="card"><h4>B. Someone created their own account <span class="muted small">(Super Admin)</span></h4>
+<ol>
+  <li>The menu badge / Home card shows "new account waiting for approval". Tap it.</li>
+  <li>Check the name and the kitchen they said they work at.</li>
+  <li>Pick their real <b>role</b> and <b>kitchen</b>, tap ✓. Or ✕ if you don't know them — the account is deleted.</li>
+</ol></div>
+
+<div class="card"><h4>C. Someone forgot their password</h4>
+<ol>
+  <li><b>Super Admin:</b> Home card "password reset request" → <b>🔑 Set new password</b> → type a temporary password → give them the username and password shown (shown once only).</li>
+  <li><b>Other admins:</b> People → 🔑 on their row → password becomes 1234.</li>
+  <li>They sign in and must choose a new password straight away.</li>
+</ol></div>
+
+<div class="card"><h4>D. Someone is locked out ("Too many failed attempts")</h4>
+<p>Either wait 15 minutes, or reset their password as in C — a reset unlocks the account immediately.</p></div>
+
+<div class="card"><h4>E. Promote someone or change their role</h4>
+<ol>
+  <li>People → change the role dropdown on their row. Choosing a head-office role gives them all 8 kitchens.</li>
+  <li>Ask them to close and reopen the app so it applies at once (otherwise within 15 minutes).</li>
+</ol>
+<p class="small muted">The Super Admin role cannot be given this way — ask IT.</p></div>
+
+<div class="card"><h4>F. A manager or staff member moves to another kitchen</h4>
+<p>There is no "change kitchen" option in the app today. Remove the account and create a new one at the new kitchen (their old records stay under their old account), or ask IT to change the kitchen on the server.</p></div>
+
+<div class="card"><h4>G. Someone leaves</h4>
+<ol>
+  <li><b>Super Admin:</b> User Management → their row → <b>✕ Remove</b> → "Yes, remove" → OK. <b>Other admins:</b> People → ✕.</li>
+  <li>They cannot sign in again. Their past cleaning records and photos stay.</li>
+</ol></div>
+
+<div class="card"><h4>H. Weekly review</h4>
+<ol>
+  <li>Home → set the picker to <b>All 8 locations</b> → look at the league table and Surat vs Ahmedabad. Tap a kitchen for detail.</li>
+  <li>Check <b>☑ Approvals</b> and clear anything waiting.</li>
+  <li><span class="path">Reports</span> → <b>🖨 Print / PDF</b> to keep a copy, or <b>⤓ Export CSV</b> to open in Excel.</li>
+</ol></div>
+
+<div class="card"><h4>I. An audit or inspection visit</h4>
+<p>Create an account with role <b>Auditor</b> for the inspector. They can see every kitchen, every job with its photo, and all reports, but cannot change anything. Remove the account when the audit is over.</p></div>
+</section>
+
+<!-- ============================================================ 6. SCHEDULE -->
+<section>
+<h2>6. The cleaning schedule</h2>
+<p>Every kitchen gets the same full deep-clean checklist. All kitchens are electric only — no gas appliances. You can view the whole list at <span class="path">Profile → 📋 Cleaning checklist</span> (head office).</p>
+<table>
+  <thead><tr><th style="width:26%">Type</th><th style="width:12%" class="c">Jobs</th><th>When</th></tr></thead>
+  <tbody>
+    <tr><td><b>Weekly</b></td><td class="c">33</td><td>Every week, spread across Tuesday to Sunday (each job has its own due day).</td></tr>
+    <tr><td><b>Every Tuesday</b></td><td class="c">1 of the 33</td><td><b>Housekeeping area cleaning</b> — always due on Tuesday. Shown in its own "Every Tuesday" section on the Cleaning tab and Home, with a yellow EVERY TUESDAY tag.</td></tr>
+    <tr><td><b>Monthly (heavy)</b></td><td class="c">13</td><td>Once a month, due on different dates between the 6th and the 28th.</td></tr>
+  </tbody>
+</table>
+<p><b>Areas:</b> Floors · Walls &amp; ceiling · Tables &amp; surfaces · Fridges &amp; freezers · Machines · Storage · Waste · Electrical safety · Staff area · Housekeeping.</p>
+<div class="tip">New jobs appear automatically when the app is opened in a new week or month — nobody has to create them. Each job is assigned to the kitchen's Location Manager, but anyone at that kitchen can do it.</div>
+<p><b>Cleaning tab tools:</b> date range (This week, Last week, Last 7 days, or From / To), filter chips (All, Weekly, Monthly, Tuesday, Pending, To approve, Rejected, No photo, Done), and for staff "My jobs".</p>
+</section>
+
+<!-- ============================================================ 7. APPENDIX -->
+<section>
+<h2>7. Appendix — permission table</h2>
+<p class="small muted">✓ = can do · — = cannot · <span class="own">own</span> = own kitchen only. SA = Super Admin, EH = Execution Head, AEH = Assistant Execution Head, HoK = Head of Kitchen, LM = Location Manager.</p>
+<table>
+  <thead><tr><th style="width:34%">Action</th><th class="c">SA</th><th class="c">EH / AEH</th><th class="c">Admin</th><th class="c">HoK</th><th class="c">LM</th><th class="c">Staff</th><th class="c">Auditor</th></tr></thead>
+  <tbody>
+    <tr><td>See all 8 kitchens</td><td class="c y">✓</td><td class="c y">✓</td><td class="c y">✓</td><td class="c y">✓</td><td class="c own">own</td><td class="c own">own</td><td class="c y">✓</td></tr>
+    <tr><td>Full dashboard</td><td class="c y">✓</td><td class="c y">✓</td><td class="c y">✓</td><td class="c y">✓</td><td class="c y">✓</td><td class="c n">simple</td><td class="c y">✓</td></tr>
+    <tr><td>Do a cleaning job (photo + Done)</td><td class="c y">✓</td><td class="c y">✓</td><td class="c y">✓</td><td class="c y">✓</td><td class="c own">own</td><td class="c own">own</td><td class="c n">—</td></tr>
+    <tr><td>Approve / reject cleaning</td><td class="c y">✓</td><td class="c y">✓</td><td class="c y">✓</td><td class="c y">✓</td><td class="c own">own</td><td class="c n">—</td><td class="c n">—</td></tr>
+    <tr><td>Re-open a finished job</td><td class="c y">✓</td><td class="c y">✓</td><td class="c y">✓</td><td class="c y">✓</td><td class="c own">own</td><td class="c n">—</td><td class="c n">—</td></tr>
+    <tr><td>Add / edit / discard products</td><td class="c y">✓</td><td class="c y">✓</td><td class="c y">✓</td><td class="c y">✓</td><td class="c own">own</td><td class="c own">own</td><td class="c n">—</td></tr>
+    <tr><td>Print labels, scan QR</td><td class="c y">✓</td><td class="c y">✓</td><td class="c y">✓</td><td class="c y">✓</td><td class="c own">own</td><td class="c own">own</td><td class="c y">✓</td></tr>
+    <tr><td>Reports, Print / PDF, CSV</td><td class="c y">✓</td><td class="c y">✓</td><td class="c y">✓</td><td class="c y">✓</td><td class="c own">own</td><td class="c n">—</td><td class="c y">✓</td></tr>
+    <tr><td>Create users, change roles, remove users</td><td class="c y">✓</td><td class="c y">✓</td><td class="c y">✓</td><td class="c n">—</td><td class="c n">—</td><td class="c n">—</td><td class="c n">—</td></tr>
+    <tr><td>Reset someone's password</td><td class="c y">✓</td><td class="c y">✓</td><td class="c y">✓</td><td class="c n">—</td><td class="c n">—</td><td class="c n">—</td><td class="c n">—</td></tr>
+    <tr><td>Approve / reject new sign-ups</td><td class="c y">✓</td><td class="c n">—</td><td class="c n">—</td><td class="c n">—</td><td class="c n">—</td><td class="c n">—</td><td class="c n">—</td></tr>
+    <tr><td>Answer "forgot password" requests</td><td class="c y">✓</td><td class="c n">—</td><td class="c n">—</td><td class="c n">—</td><td class="c n">—</td><td class="c n">—</td><td class="c n">—</td></tr>
+    <tr><td>User Management panel</td><td class="c y">✓</td><td class="c n">—</td><td class="c n">—</td><td class="c n">—</td><td class="c n">—</td><td class="c n">—</td><td class="c n">—</td></tr>
+    <tr><td>Cloud sync status, checklist view, recent activity</td><td class="c y">✓</td><td class="c y">✓</td><td class="c y">✓</td><td class="c n">—</td><td class="c n">—</td><td class="c n">—</td><td class="c n">—</td></tr>
+    <tr><td>Change own password, notifications, help, log out</td><td class="c y">✓</td><td class="c y">✓</td><td class="c y">✓</td><td class="c y">✓</td><td class="c y">✓</td><td class="c y">✓</td><td class="c y">✓</td></tr>
+  </tbody>
+</table>
+
+<h3>Glossary</h3>
+<table>
+  <thead><tr><th style="width:24%">Word</th><th>Meaning</th></tr></thead>
+  <tbody>
+    <tr><td>PENDING</td><td>A job not done yet.</td></tr>
+    <tr><td>OVERDUE</td><td>A pending job past its due date.</td></tr>
+    <tr><td>AWAITING OK</td><td>Done with a photo, waiting for a manager or head office to approve.</td></tr>
+    <tr><td>APPROVED</td><td>Checked and accepted — counts towards the kitchen score.</td></tr>
+    <tr><td>REJECTED</td><td>Sent back with a reason — needs doing again.</td></tr>
+    <tr><td>NO PHOTO</td><td>Marked done without a photo — should not happen; the photo is compulsory.</td></tr>
+    <tr><td>Re-open</td><td>Puts a done job back to pending (approvers only).</td></tr>
+    <tr><td>Temporary password</td><td>Set by an admin; must be changed at the next sign-in.</td></tr>
+    <tr><td>Pending account</td><td>A self sign-up waiting for the Super Admin.</td></tr>
+  </tbody>
+</table>
+<p class="small muted" style="margin-top:14pt">This guide describes the app as of 19 September 2026. If roles or screens change, update docs/role-guide.html and print it again to PDF.</p>
+</section>
+
+</body>
+</html>

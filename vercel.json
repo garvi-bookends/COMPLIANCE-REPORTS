@@ -1,0 +1,33 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "buildCommand": "npm run build",
+  "outputDirectory": "public",
+  "functions": {
+    "api/index.js": { "maxDuration": 30 }
+  },
+  "rewrites": [
+    { "source": "/api/(.*)", "destination": "/api/index" },
+    { "source": "/((?!api/).*)", "destination": "/index.html" }
+  ],
+  "headers": [
+    {
+      "source": "/((?!api/).*)",
+      "headers": [
+        {
+          "key": "Content-Security-Policy",
+          "value": "default-src 'self';script-src 'self' 'unsafe-inline';style-src 'self' 'unsafe-inline';img-src 'self' data: blob: https://*.supabase.co https://*.public.blob.vercel-storage.com;connect-src 'self';font-src 'self' data:;object-src 'none';frame-ancestors 'none';base-uri 'self';form-action 'self';script-src-attr 'none';upgrade-insecure-requests"
+        },
+        { "key": "Strict-Transport-Security", "value": "max-age=15552000; includeSubDomains" },
+        { "key": "X-Content-Type-Options", "value": "nosniff" },
+        { "key": "X-Frame-Options", "value": "DENY" },
+        { "key": "Referrer-Policy", "value": "no-referrer" },
+        { "key": "Cross-Origin-Opener-Policy", "value": "same-origin" },
+        { "key": "Cross-Origin-Resource-Policy", "value": "same-site" },
+        { "key": "Cache-Control", "value": "no-cache" }
+      ]
+    }
+  ],
+  "crons": [
+    { "path": "/api/cron/cleanup", "schedule": "0 3 * * *" }
+  ]
+}
