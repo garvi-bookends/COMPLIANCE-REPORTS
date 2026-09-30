@@ -16482,7 +16482,7 @@ function ckRefresh(force) {
     if (s.open !== CK.sheetOpen || force) ckSheet(CK.sheet, true);
   }
 }
-function ckTick() {
+function ckPoll() {
   if (!ME || document.hidden) return;
   var sig = ckSig();
   if (sig !== CK.sig) {
@@ -16493,11 +16493,11 @@ function ckTick() {
   }
   ckRefresh(false);
 }
-setInterval(ckTick, 5000);
+setInterval(ckPoll, 5000);
 document.addEventListener('visibilitychange', function () {
   if (document.hidden || !ME) return;
   if (S.tab === 'chk') ckLoadStatus(true);
-  ckTick();
+  ckPoll();
 });
 
 /* ---------- the checklist sheet: tick every item, then submit ---------- */
