@@ -1,4 +1,4 @@
-# Bookends Kitchen Compliance — authentication setup
+# Bookends Cleaning — authentication setup
 
 Written for: whoever deploys and maintains this app.
 

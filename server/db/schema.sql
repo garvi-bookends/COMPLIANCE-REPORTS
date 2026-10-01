@@ -1,5 +1,5 @@
 -- ===========================================================================
--- Bookends Kitchen Compliance — authentication schema
+-- Bookends Cleaning — authentication schema
 --
 -- Run once with:  npm run migrate
 -- Safe to re-run: every statement is idempotent.

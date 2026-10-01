@@ -1,6 +1,6 @@
 'use strict';
 /* ---------------------------------------------------------------------------
-   Bookends Kitchen Compliance — the Express app.
+   Bookends Cleaning — the Express app.
 
    This file builds the app and nothing else: no listen(), no timers. That is
    what lets the same code run two ways:

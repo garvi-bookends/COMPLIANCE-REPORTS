@@ -1,6 +1,6 @@
 'use strict';
 /* ---------------------------------------------------------------------------
-   Bookends Kitchen Compliance — long-running server (local and Render).
+   Bookends Cleaning — long-running server (local and Render).
 
    The app itself is built in ./app.js. This file only adds what a process
    that stays up needs: a database check before accepting traffic, listen(),

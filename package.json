@@ -1,5 +1,5 @@
 {
-  "name": "bookends-compliance",
+  "name": "bookends-cleaning",
   "version": "1.0.0",
   "private": true,
   "description": "Bookends Kitchen Operations & Compliance — Express API + static PWA (Vercel, Render or any Node host)",

@@ -1,8 +1,8 @@
-# Bookends Kitchen Compliance App — Application Flow & Use-Case Document
+# Bookends Cleaning App — Application Flow & Use-Case Document
 
 | | |
 |---|---|
-| **Application** | Bookends Kitchen Compliance (web app, installable on phones) |
+| **Application** | Bookends Cleaning (web app, installable on phones) |
 | **Version** | 1.0 |
 | **Document date** | 19 September 2026 |
 | **Prepared by** | garvi-bookends |
@@ -32,7 +32,7 @@
 
 ## 1. Executive summary
 
-The Bookends Kitchen Compliance App replaces paper checklists and verbal follow-ups with one phone-first app used by every kitchen. Staff and managers open it in a phone browser, or add it to the home screen like a normal app. It covers four areas of food-safety compliance:
+The Bookends Cleaning App replaces paper checklists and verbal follow-ups with one phone-first app used by every kitchen. Staff and managers open it in a phone browser, or add it to the home screen like a normal app. It covers four areas of food-safety compliance:
 
 | Pillar | What it does |
 |---|---|
